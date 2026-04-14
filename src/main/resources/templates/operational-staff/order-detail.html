@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Order Detail | glasseshop</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link th:href="@{/css/main.css}" rel="stylesheet">
+    <style>
+        .detail-header {
+            background-color: white;
+            padding: 3rem 0;
+            border-bottom: 1px solid var(--border-color);
+            margin-bottom: 3rem;
+        }
+
+        .sidebar-card {
+            top: 2rem;
+            position: sticky;
+        }
+
+        .item-row {
+            padding: 1.5rem;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+        }
+
+        .item-row:last-child {
+            border-bottom: none;
+        }
+
+        .product-img {
+            width: 80px;
+            height: 80px;
+            background: #f1f5f9;
+            border-radius: var(--radius);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-muted);
+            font-size: 1.5rem;
+        }
+    </style>
+</head>
+
+<body class="bg-light">
+    <nav class="glass border-bottom py-3 mb-0">
+        <div class="container d-flex justify-content-between align-items-center">
+            <a th:href="@{/operational-staff/dashboard}" class="btn btn-light"><i class="fas fa-arrow-left me-2"></i>
+                Dashboard</a>
+            <h5 class="mb-0 fw-bold">Order Verification</h5>
+            <div class="dropdown">
+                <button class="btn btn-light dropdown-toggle" type="button" data-bs-toggle="dropdown">Actions</button>
+                <ul class="dropdown-menu">
+                    <li><a class="dropdown-item" href="#">Print Invoice</a></li>
+                    <li><a class="dropdown-item text-danger" href="#">Cancel Order</a></li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="detail-header">
+        <div class="container">
+            <div class="row align-items-center">
+                <div class="col-md-8">
+                    <span class="badge bg-primary-subtle text-primary mb-2 fw-bold"
+                        th:text="${order.status}">PENDING</span>
+                    <h1 class="fw-bold mb-0">Order <span th:text="${'#' + order.orderId}">#123</span></h1>
+                    <p class="text-muted mt-2"
+                        th:text="'Placed on ' + ${#temporals.format(order.orderDate, 'MMMM dd, yyyy')}">Date</p>
+                </div>
+                <div class="col-md-4 text-md-end">
+                    <p class="text-muted mb-1 small uppercase fw-bold">Total Amount</p>
+                    <h2 class="text-primary fw-bold" th:text="${#numbers.formatCurrency(order.totalPrice)}">$0.00</h2>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="container pb-5">
+        <div class="row g-4">
+            <div class="col-md-8">
+                <div class="card-premium p-0 overflow-hidden mb-4">
+                    <div class="p-4 border-bottom bg-white d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0 fw-bold">Order Items</h5>
+                        <span class="text-muted small" th:text="${#lists.size(orderItems)} + ' items'">3 items</span>
+                    </div>
+                    <div class="bg-white">
+                        <div class="item-row" th:each="item : ${orderItems}">
+                            <div class="product-img"><i class="fas fa-glasses"></i></div>
+                            <div class="flex-grow-1">
+                                <h6 class="fw-bold mb-1" th:text="${item.variant.product.name}">Product Name</h6>
+                                <p class="text-muted small mb-0" th:text="${item.fulfillmentType}">Type</p>
+                            </div>
+                            <div class="text-end">
+                                <p class="fw-bold mb-0" th:text="${#numbers.formatCurrency(item.unitPrice)}">$0.00</p>
+                                <p class="text-muted small mb-0" th:text="'Qty: ' + ${item.quantity}">Qty</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="row g-4">
+                    <div class="col-md-6">
+                        <div class="card-premium p-4 h-100">
+                            <h6 class="fw-bold mb-3 uppercase small text-muted">Shipping Address</h6>
+                            <p class="mb-0" style="white-space: pre-line;"
+                                th:text="${order.shippingAddress != null ? order.shippingAddress.addressLine1 : 'No address provided'}">
+                            </p>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card-premium p-4 h-100">
+                            <h6 class="fw-bold mb-3 uppercase small text-muted">Payment Method</h6>
+                            <div class="d-flex align-items-center gap-3">
+                                <i class="fas fa-credit-card text-secondary fs-3"></i>
+                                <div>
+                                    <p class="mb-0 fw-bold">Online Payment</p>
+                                    <p class="text-muted small mb-0" th:text="${order.paymentStatus}">Status</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-4">
+                <div class="card-premium sidebar-card p-4">
+                    <h5 class="fw-bold mb-4">Customer Details</h5>
+                    <div class="d-flex align-items-center gap-3 mb-4">
+                        <div class="rounded-circle bg-primary-subtle text-primary d-flex align-items-center justify-content-center fw-bold"
+                            style="width: 48px; height: 48px;" th:text="${#strings.substring(order.user.name, 0, 1)}">J
+                        </div>
+                        <div>
+                            <p class="fw-bold mb-0" th:text="${order.user.name}">John Doe</p>
+                            <p class="text-muted small mb-0" th:text="${order.user.email}">email@example.com</p>
+                        </div>
+                    </div>
+                    <hr>
+                    <div class="d-flex justify-content-between mb-3">
+                        <span class="text-muted">Subtotal</span>
+                        <span class="fw-bold" th:text="${#numbers.formatCurrency(order.totalPrice)}">$0.00</span>
+                    </div>
+                    <div class="d-flex justify-content-between mb-3">
+                        <span class="text-muted">Shipping</span>
+                        <span class="text-success fw-bold">Free</span>
+                    </div>
+                    <hr>
+                    <div class="d-flex justify-content-between mb-4">
+                        <span class="fw-bold h5 mb-0">Total</span>
+                        <span class="fw-bold h5 mb-0 text-primary"
+                            th:text="${#numbers.formatCurrency(order.totalPrice)}">$0.00</span>
+                    </div>
+                    <button class="btn-premium btn-primary-premium w-100">Approve Order</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+
+</html>

@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+
+<head>
+    <meta charset="UTF-8">
+    <title th:text="${product.name} + ' - Details'">Product Details</title>
+
+</head>
+
+<body>
+    <div class="container">
+        <h1 th:text="${product.name}">Product Name</h1>
+        <div class="brand" th:text="${product.brand}">Brand Name</div>
+
+        <div class="description">
+            <h3>Description</h3>
+            <p th:text="${product.description}">Product description goes here.</p>
+        </div>
+
+        <h3>Available Variations</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Image</th>
+                    <th>Color</th>
+                    <th>Size</th>
+                    <th>Material</th>
+                    <th>Price</th>
+                    <th>Stock</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr th:each="variant : ${variants}">
+                    <td>
+                        <img th:if="${variant.imageUrl}" th:src="${variant.imageUrl}" class="variant-img"
+                            alt="Variant Image">
+                        <span th:unless="${variant.imageUrl}">No Image</span>
+                    </td>
+                    <td th:text="${variant.color}">Color</td>
+                    <td th:text="${variant.frameSize}">Size</td>
+                    <td th:text="${variant.material}">Material</td>
+                    <td class="price" th:text="'$' + ${variant.price}">Price</td>
+                    <td class="stock">
+                        <span th:if="${variant.stockQuantity > 0}" class="in-stock"
+                            th:text="${variant.stockQuantity} + ' in stock'">10 in stock</span>
+                        <span th:if="${variant.stockQuantity <= 0}" class="out-of-stock">Out of Stock</span>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+
+        <a href="javascript:history.back()" class="back-link">&larr; Back to Results</a>
+    </div>
+</body>
+
+</html>

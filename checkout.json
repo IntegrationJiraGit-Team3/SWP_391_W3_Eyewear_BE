@@ -1,0 +1,6 @@
+{
+    "shippingAddressId": 1,
+    "billingAddressId": 1,
+    "paymentMethod": "COD",
+    "items": []
+}

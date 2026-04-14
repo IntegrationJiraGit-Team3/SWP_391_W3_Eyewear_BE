@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org" xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>glasseshop | Premium Eyewear</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link th:href="@{/css/main.css}" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .hero {
+            padding: 8rem 2rem;
+            text-align: center;
+            background: radial-gradient(circle at top right, #eef2ff, #f8fafc);
+            min-height: 80vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .nav-home {
+            position: absolute;
+            top: 0;
+            width: 100%;
+            padding: 1.5rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 10;
+        }
+
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+            padding: 4rem 2rem;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .search-container {
+            max-width: 600px;
+            width: 100%;
+            margin: 2rem auto;
+            position: relative;
+        }
+
+        .search-container input {
+            padding-right: 4rem;
+        }
+
+        .search-container button {
+            position: absolute;
+            right: 0.5rem;
+            top: 50%;
+            transform: translateY(-50%);
+            padding: 0.5rem 1rem;
+        }
+    </style>
+</head>
+
+<body>
+    <nav class="nav-home glass">
+        <h2 class="text-gradient" style="font-weight: 800; margin: 0;">glasseshop</h2>
+        <div class="nav-links" style="display: flex; align-items: center; gap: 1.5rem;">
+            <div sec:authorize="isAuthenticated()" style="display: flex; align-items: center; gap: 1rem;">
+                <span class="text-secondary" style="font-weight: 500;">Welcome back!</span>
+                <form th:action="@{/logout}" method="post" style="margin: 0;">
+                    <button type="submit" class="btn-premium"
+                        style="background: none; border: 1px solid var(--border-color); padding: 0.5rem 1rem;">Logout</button>
+                </form>
+            </div>
+            <div sec:authorize="!isAuthenticated()">
+                <a th:href="@{/login}" class="btn-premium btn-primary-premium">Sign In</a>
+            </div>
+        </div>
+    </nav>
+
+    <header class="hero">
+        <h1 style="font-size: 3.5rem; font-weight: 800; margin-bottom: 1.5rem; line-height: 1.1;">
+            Elevate Your Vision with <br><span class="text-gradient">Premium Styles</span>
+        </h1>
+        <p class="text-secondary" style="font-size: 1.25rem; max-width: 600px; margin-bottom: 2.5rem;">
+            Discover our curated collection of luxury frames and precision lenses tailored just for you.
+        </p>
+
+        <div class="search-container">
+            <form th:action="@{/products/search}" method="get">
+                <input type="text" name="query" class="input-premium" style="font-size: 1.1rem;"
+                    placeholder="Search by name, brand, or style...">
+                <button type="submit" class="btn-premium btn-primary-premium">
+                    <i class="fas fa-search"></i>
+                </button>
+            </form>
+        </div>
+
+        <div style="margin-top: 2rem; display: flex; gap: 1rem; justify-content: center;">
+            <a th:href="@{/products}" class="btn-premium"
+                style="background: white; border: 1px solid var(--border-color);">
+                Explore Products
+            </a>
+            <div sec:authorize="hasAnyRole('OPERATIONAL_STAFF', 'ADMIN')">
+                <a th:href="@{/operational-staff/dashboard}" class="btn-premium btn-primary-premium">
+                    Go to Dashboard <i class="fas fa-arrow-right"></i>
+                </a>
+            </div>
+        </div>
+    </header>
+
+    <section class="feature-grid">
+        <div class="card-premium" style="padding: 2rem;">
+            <div style="font-size: 2rem; color: var(--primary); margin-bottom: 1rem;"><i class="fas fa-glasses"></i>
+            </div>
+            <h3 style="margin-bottom: 0.75rem;">Quality Frames</h3>
+            <p class="text-muted">Handpicked selection of the world's most iconic eyewear brands.</p>
+        </div>
+        <div class="card-premium" style="padding: 2rem;">
+            <div style="font-size: 2rem; color: var(--primary); margin-bottom: 1rem;"><i
+                    class="fas fa-file-prescription"></i></div>
+            <h3 style="margin-bottom: 0.75rem;">Precision Lenses</h3>
+            <p class="text-muted">High-definition lenses manufactured with cutting-edge technology.</p>
+        </div>
+        <div class="card-premium" style="padding: 2rem;">
+            <div style="font-size: 2rem; color: var(--primary); margin-bottom: 1rem;"><i class="fas fa-truck"></i></div>
+            <h3 style="margin-bottom: 0.75rem;">Fast Fulfillment</h3>
+            <p class="text-muted">Streamlined processing from prescription to your doorstep.</p>
+        </div>
+    </section>
+
+    <footer
+        style="padding: 4rem 2rem; text-align: center; border-top: 1px solid var(--border-color); background: white;">
+        <p class="text-muted">&copy; 2024 glasseshop. All rights reserved.</p>
+    </footer>
+</body>
+
+</html>

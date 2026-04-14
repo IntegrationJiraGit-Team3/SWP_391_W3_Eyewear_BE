@@ -1,0 +1,100 @@
+﻿    from
+        product_variant pv1_0
+Hibernate: 
+    select
+        p1_0.product_id,
+        p1_0.brand,
+        p1_0.created_at,
+        p1_0.description,
+        p1_0.is_prescription_supported,
+        p1_0.name,
+        p1_0.product_type 
+    from
+        product p1_0 
+    where
+        p1_0.product_id=?
+Hibernate: 
+    select
+        p1_0.product_id,
+        p1_0.brand,
+        p1_0.created_at,
+        p1_0.description,
+        p1_0.is_prescription_supported,
+        p1_0.name,
+        p1_0.product_type 
+    from
+        product p1_0 
+    where
+        p1_0.product_id=?
+Hibernate: 
+    select
+        p1_0.product_id,
+        p1_0.brand,
+        p1_0.created_at,
+        p1_0.description,
+        p1_0.is_prescription_supported,
+        p1_0.name,
+        p1_0.product_type 
+    from
+        product p1_0 
+    where
+        p1_0.product_id=?
+Hibernate: 
+    select
+        lo1_0.lens_option_id,
+        lo1_0.coating,
+        lo1_0.color,
+        lo1_0.price,
+        lo1_0.thickness,
+        lo1_0.type 
+    from
+        lens_option lo1_0
+Hibernate: 
+    insert 
+    into
+        orders
+        (billing_address_id, order_date, payment_status, shipping_address_id, status, total_price, user_id) 
+    values
+        (?, ?, ?, ?, ?, ?, ?)
+Hibernate: 
+    insert 
+    into
+        order_item
+        (fulfillment_type, lens_option_id, order_id, quantity, unit_price, variant_id) 
+    values
+        (?, ?, ?, ?, ?, ?)
+Hibernate: 
+    insert 
+    into
+        orders
+        (billing_address_id, order_date, payment_status, shipping_address_id, status, total_price, user_id) 
+    values
+        (?, ?, ?, ?, ?, ?, ?)
+Hibernate: 
+    insert 
+    into
+        order_item
+        (fulfillment_type, lens_option_id, order_id, quantity, unit_price, variant_id) 
+    values
+        (?, ?, ?, ?, ?, ?)
+Hibernate: 
+    insert 
+    into
+        orders
+        (billing_address_id, order_date, payment_status, shipping_address_id, status, total_price, user_id) 
+    values
+        (?, ?, ?, ?, ?, ?, ?)
+Hibernate: 
+    insert 
+    into
+        order_item
+        (fulfillment_type, lens_option_id, order_id, quantity, unit_price, variant_id) 
+    values
+        (?, ?, ?, ?, ?, ?)
+Hibernate: 
+    select
+        count_big(*) 
+    from
+        product p1_0
+2026-02-02T15:41:20.249+07:00  INFO 36420 --- [glasseshop] [  restartedMain] c.fpt.glasseshop.config.DataInitialize  : Data initialization check complete. Product count: 3
+2026-02-02T15:41:20.251+07:00  INFO 36420 --- [glasseshop] [  restartedMain] .ConditionEvaluationDeltaLoggingListener : Condition evaluation unchanged

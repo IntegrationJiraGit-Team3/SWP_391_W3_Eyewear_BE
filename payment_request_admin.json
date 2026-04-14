@@ -1,0 +1,5 @@
+{
+    "orderId": 5,
+    "paymentMethod": "STRIPE",
+    "paymentToken": "tok_visa"
+}

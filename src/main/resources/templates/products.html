@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Search Results</title>
+
+</head>
+
+<body>
+    <h1>Search Results</h1>
+
+    <div class="search-form">
+        <form th:action="@{/products/search}" method="get">
+            <input type="text" name="query" th:value="${query}" required placeholder="Search products...">
+            <button type="submit">Search</button>
+        </form>
+    </div>
+
+    <p th:if="${#lists.isEmpty(products)}">
+        No products found for "<span th:text="${query}"></span>".
+    </p>
+
+    <div th:each="product : ${products}" class="product-card">
+        <div class="product-name" th:text="${product.name}">Product Name</div>
+        <div class="product-brand" th:text="${product.brand}">Brand</div>
+        <p th:text="${product.description}">Description</p>
+        <p>
+            <a th:href="@{/products/{id}(id=${product.productId})}"
+                style="color: #3498db; font-weight: bold; text-decoration: none;">
+                View Details &rarr;
+            </a>
+        </p>
+    </div>
+
+    <p><a href="/">Back to Dashboard</a></p>
+</body>
+
+</html>

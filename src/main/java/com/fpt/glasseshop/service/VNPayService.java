@@ -17,8 +17,12 @@ public class VNPayService {
     private VNPayConfig vnPayConfig;
 
     public String createOrder(int total, String orderInfor) {
+        return createOrder(total, orderInfor, null, "127.0.0.1");
+    }
+
+    public String createOrder(int total, String orderInfor, String bankCode, String ipAddress) {
         String vnp_TxnRef = utils.getRandomNumber(8);
-        String vnp_IpAddr = "127.0.0.1"; // Can be replaced by getting real IP from request
+        String vnp_IpAddr = (ipAddress == null || ipAddress.isBlank()) ? "127.0.0.1" : ipAddress;
         
         long amount = total * 100L;
         
@@ -27,6 +31,9 @@ public class VNPayService {
         vnp_Params.put("vnp_TxnRef", vnp_TxnRef);
         vnp_Params.put("vnp_OrderInfo", orderInfor);
         vnp_Params.put("vnp_IpAddr", vnp_IpAddr);
+        if (bankCode != null && !bankCode.isBlank()) {
+            vnp_Params.put("vnp_BankCode", bankCode);
+        }
         
         List<String> fieldNames = new ArrayList<>(vnp_Params.keySet());
         Collections.sort(fieldNames);

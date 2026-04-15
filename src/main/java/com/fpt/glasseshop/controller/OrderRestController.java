@@ -27,7 +27,6 @@ public class OrderRestController {
     private final OrderService orderService;
     private final UserAccountRepository userAccountRepository;
 
-    // ✅ LẤY USER TỪ JWT
     private UserAccount getCurrentUser() {
         String email = SecurityContextHolder.getContext().getAuthentication().getName();
 
@@ -56,7 +55,6 @@ public class OrderRestController {
 
     @GetMapping("/{id}")
     public ResponseEntity<ApiResponse<OrderDTO>> getOrderById(@PathVariable Long id) {
-
         return orderService.getOrderDTOById(id)
                 .map(order -> {
                     UserAccount currentUser = getCurrentUser();
@@ -68,7 +66,6 @@ public class OrderRestController {
 
     @GetMapping("/user/{userId}")
     public ResponseEntity<ApiResponse<List<OrderDTO>>> getOrdersByUserId(@PathVariable Long userId) {
-
         UserAccount currentUser = getCurrentUser();
         checkIfOwnerOrStaff(userId, currentUser);
 
@@ -77,20 +74,16 @@ public class OrderRestController {
     }
 
     @PostMapping("/checkout")
-    public ResponseEntity<ApiResponse<OrderDTO>> checkout(
-            @Valid @RequestBody CreateOrderRequest req) {
-
+    public ResponseEntity<ApiResponse<OrderDTO>> checkout(@Valid @RequestBody CreateOrderRequest req) {
         try {
             UserAccount user = getCurrentUser();
             OrderDTO orderDTO = orderService.createOrderFromCart(user, req);
 
             return ResponseEntity.status(HttpStatus.CREATED)
                     .body(ApiResponse.success("Order completed successfully", orderDTO));
-
         } catch (IllegalArgumentException e) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body(ApiResponse.error(e.getMessage()));
-
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(ApiResponse.error("Error during checkout: " + e.getMessage()));
@@ -105,28 +98,15 @@ public class OrderRestController {
         try {
             OrderDTO updatedOrder = orderService.updateOrderStatus(id, status);
             return ResponseEntity.ok(ApiResponse.success("Order status updated", updatedOrder));
-
         } catch (IllegalArgumentException e) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body(ApiResponse.error(e.getMessage()));
-
         } catch (ResourceNotFoundException e) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND)
                     .body(ApiResponse.error(e.getMessage()));
         }
     }
 
-    @DeleteMapping("/{id}")
-    public ResponseEntity<ApiResponse<Void>> deleteOrder(@PathVariable Long id) {
-        try {
-            orderService.deleteOrder(id);
-            return ResponseEntity.ok(ApiResponse.success("Order deleted successfully", null));
-
-        } catch (RuntimeException e) {
-            return ResponseEntity.status(404)
-                    .body(ApiResponse.error(e.getMessage()));
-        }
-    }
     @PatchMapping("/{id}/paymentStatus")
     public ResponseEntity<ApiResponse<OrderDTO>> paymentOrderStatus(
             @PathVariable Long id,
@@ -135,11 +115,9 @@ public class OrderRestController {
         try {
             OrderDTO updatedOrder = orderService.updatePaymentOrderStatus(id, status);
             return ResponseEntity.ok(ApiResponse.success("Order payment status updated", updatedOrder));
-
         } catch (IllegalArgumentException e) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body(ApiResponse.error(e.getMessage()));
-
         } catch (ResourceNotFoundException e) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND)
                     .body(ApiResponse.error(e.getMessage()));
@@ -155,6 +133,28 @@ public class OrderRestController {
             return ResponseEntity.ok(ApiResponse.success("Payment method updated", updatedOrder));
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(ApiResponse.error(e.getMessage()));
+        }
+    }
+
+    @PatchMapping("/{id}/cancel-payment")
+    public ResponseEntity<ApiResponse<OrderDTO>> cancelPendingPayment(@PathVariable Long id) {
+        try {
+            OrderDTO updatedOrder = orderService.cancelPendingPayment(id);
+            return ResponseEntity.ok(ApiResponse.success("Pending payment cancelled", updatedOrder));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(ApiResponse.error(e.getMessage()));
+        }
+    }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<ApiResponse<Void>> deleteOrder(@PathVariable Long id) {
+        try {
+            orderService.deleteOrder(id);
+            return ResponseEntity.ok(ApiResponse.success("Order deleted successfully", null));
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(404)
                     .body(ApiResponse.error(e.getMessage()));
         }
     }
@@ -181,5 +181,4 @@ public class OrderRestController {
         List<OrderDTO> orders = orderService.getOrdersDTOByUserId(currentUser.getUserId());
         return ResponseEntity.ok(ApiResponse.success(orders));
     }
-
 }

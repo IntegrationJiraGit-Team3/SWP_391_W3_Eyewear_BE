@@ -19,6 +19,9 @@ public class AdminDashboardAnalyticsResponse {
     private String groupBy;
 
     private BigDecimal totalRevenue;
+    private BigDecimal grossRevenue;
+    private BigDecimal netRevenue;
+    private BigDecimal pendingRevenue;
     private BigDecimal projectedRevenue;
     private BigDecimal refundedAmount;
     private BigDecimal remainingRevenueAfterRefund;
@@ -34,14 +37,23 @@ public class AdminDashboardAnalyticsResponse {
     private Long shippingOrders;
     private Long cancelledOrders;
 
+    private Long totalReturnRequests;
+    private Long pendingReturnRequests;
+    private Long refundPendingCount;
+    private Long refundedCount;
+
     private Double revenueChangePercent;
     private Double customerChangePercent;
     private Double soldItemsChangePercent;
     private Double refundedChangePercent;
+    private Double refundRate;
+    private Double completionRate;
 
-    private List<DashboardTimePointResponse> timeline;
     private List<OrderStatusReportResponse> orderStatusReport;
+    private List<ReturnStatusReportResponse> returnStatusReport;
+    private List<DashboardTimePointResponse> timeline;
     private List<ProductReportResponse> bestSellingProductsByQuantity;
     private List<ProductReportResponse> bestSellingProductsByRevenue;
+    private List<ProductInventoryReportResponse> productInventoryReport;
     private List<CustomerPurchaseSummaryResponse> topCustomersBySpending;
 }

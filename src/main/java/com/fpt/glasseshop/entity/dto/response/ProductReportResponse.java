@@ -15,4 +15,7 @@ public class ProductReportResponse {
     private String productName;
     private Long quantitySold;
     private BigDecimal revenue;
+    private BigDecimal completedRevenue;
+    private BigDecimal pendingRevenue;
+    private BigDecimal refundedRevenue;
 }

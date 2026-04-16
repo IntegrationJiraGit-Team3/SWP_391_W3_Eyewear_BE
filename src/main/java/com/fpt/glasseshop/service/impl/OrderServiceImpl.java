@@ -91,12 +91,19 @@ public class OrderServiceImpl implements OrderService {
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new ResourceNotFoundException("Order not found with id: " + orderId));
 
+        if (newStatus == null || newStatus.trim().isEmpty()) {
+            throw new IllegalArgumentException("Order status is required");
+        }
+
         List<String> validStatuses = Arrays.asList(
                 "PENDING", "PROCESSING", "DELIVERING", "DELIVERED",
-                "CANCELED", "CANCELLED", "SHIPPED", "PREORDER", "COMPLETED"
+                "CANCELED", "CANCELLED", "SHIPPED", "PREORDER", "COMPLETED", "REFUNDED"
         );
 
-        String targetStatus = newStatus.toUpperCase();
+        String targetStatus = newStatus.trim().toUpperCase();
+        if ("REFUND".equals(targetStatus)) {
+            targetStatus = "REFUNDED";
+        }
         if (!validStatuses.contains(targetStatus)) {
             throw new IllegalArgumentException("Invalid order status: " + targetStatus);
         }

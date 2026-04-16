@@ -25,36 +25,38 @@ public class ReturnRequestController {
         ReturnRequestResponseDTO saved = returnRequestService.createReturnRequest(dto);
         return ResponseEntity.ok(ApiResponse.success("Return request created successfully", saved));
     }
+
     @GetMapping
     public ResponseEntity<ApiResponse<List<ReturnRequestResponseDTO>>> getAllReturnRequests() {
         List<ReturnRequestResponseDTO> list = returnRequestService.getAll();
         return ResponseEntity.ok(ApiResponse.success("Return requests fetched successfully", list));
     }
-    //ADMIN UPDATE
+
     @PutMapping("/{requestId}/approve")
     public ResponseEntity<ApiResponse<ReturnRequestResponseDTO>> approve(@PathVariable Long requestId) {
         ReturnRequest result = returnRequestService.approveRequest(requestId);
-        return ResponseEntity.ok().body(ApiResponse.success(returnRequestService.mapToDTO(result)));
+        return ResponseEntity.ok(ApiResponse.success(returnRequestService.mapToDTO(result)));
     }
+
     @PutMapping("/{requestId}/reject")
     public ResponseEntity<ApiResponse<ReturnRequestResponseDTO>> reject(
             @PathVariable Long requestId,
             @RequestBody UpdateReturnStatusDTO dto
     ) {
         ReturnRequest result = returnRequestService.rejectRequest(requestId, dto.getRejectionReason());
-        return ResponseEntity.ok().body(ApiResponse.success(returnRequestService.mapToDTO(result)));
+        return ResponseEntity.ok(ApiResponse.success(returnRequestService.mapToDTO(result)));
     }
 
     @PutMapping("/{requestId}/received")
     public ResponseEntity<ApiResponse<ReturnRequestResponseDTO>> markReceived(@PathVariable Long requestId) {
         ReturnRequest result = returnRequestService.markAsReceivedReturn(requestId);
-        return ResponseEntity.ok().body(ApiResponse.success(returnRequestService.mapToDTO(result)));
+        return ResponseEntity.ok(ApiResponse.success(returnRequestService.mapToDTO(result)));
     }
 
     @PutMapping("/{requestId}/refund-pending")
     public ResponseEntity<ApiResponse<ReturnRequestResponseDTO>> markRefundPending(@PathVariable Long requestId) {
         ReturnRequest result = returnRequestService.markRefundPending(requestId);
-        return ResponseEntity.ok().body(ApiResponse.success(returnRequestService.mapToDTO(result)));
+        return ResponseEntity.ok(ApiResponse.success(returnRequestService.mapToDTO(result)));
     }
 
     @PutMapping("/{requestId}/refund-invalid")
@@ -63,7 +65,7 @@ public class ReturnRequestController {
             @RequestBody UpdateReturnStatusDTO dto
     ) {
         ReturnRequest result = returnRequestService.markRefundInfoInvalid(requestId, dto.getRefundNote());
-        return ResponseEntity.ok().body(ApiResponse.success(returnRequestService.mapToDTO(result)));
+        return ResponseEntity.ok(ApiResponse.success(returnRequestService.mapToDTO(result)));
     }
 
     @PutMapping("/{requestId}/refund-info")
@@ -72,20 +74,30 @@ public class ReturnRequestController {
             @RequestBody UpdateRefundBankInfoDTO dto
     ) {
         ReturnRequestResponseDTO result = returnRequestService.updateRefundBankInfo(requestId, dto);
-        return ResponseEntity.ok().body(ApiResponse.success(result));
+        return ResponseEntity.ok(ApiResponse.success(result));
     }
 
     @PutMapping("/{requestId}/refunded")
-    public ResponseEntity<ApiResponse<ReturnRequestResponseDTO>> refunded(@PathVariable Long requestId) {
-        ReturnRequest result = returnRequestService.markAsRefunded(requestId);
-        return ResponseEntity.ok().body(ApiResponse.success(returnRequestService.mapToDTO(result)));
+    public ResponseEntity<ApiResponse<ReturnRequestResponseDTO>> refunded(
+            @PathVariable Long requestId,
+            @RequestBody RefundProcessDTO dto
+    ) {
+        ReturnRequest result = returnRequestService.markAsRefunded(requestId, dto);
+        return ResponseEntity.ok(ApiResponse.success(returnRequestService.mapToDTO(result)));
+    }
+
+    @PutMapping("/{requestId}/confirm-refund-received")
+    public ResponseEntity<ApiResponse<ReturnRequestResponseDTO>> confirmRefundReceived(@PathVariable Long requestId) {
+        ReturnRequest result = returnRequestService.confirmRefundReceivedByCustomer(requestId);
+        return ResponseEntity.ok(ApiResponse.success(returnRequestService.mapToDTO(result)));
     }
 
     @PutMapping("/{requestId}/complete")
     public ResponseEntity<ApiResponse<ReturnRequestResponseDTO>> complete(@PathVariable Long requestId) {
         ReturnRequest result = returnRequestService.completeRequest(requestId);
-        return ResponseEntity.ok().body(ApiResponse.success(returnRequestService.mapToDTO(result)));
+        return ResponseEntity.ok(ApiResponse.success(returnRequestService.mapToDTO(result)));
     }
+
     @GetMapping("/order-item/{orderItemId}")
     public ResponseEntity<ApiResponse<List<ReturnRequestResponseDTO>>> getByOrderItemId(
             @PathVariable Long orderItemId) {
@@ -93,6 +105,7 @@ public class ReturnRequestController {
         List<ReturnRequestResponseDTO> dto = returnRequestService.getByOrderItemId(orderItemId);
         return ResponseEntity.ok(ApiResponse.success("Return request fetched successfully", dto));
     }
+
     @GetMapping("/{requestId}")
     public ResponseEntity<ApiResponse<ReturnRequestResponseDTO>> getById(
             @PathVariable Long requestId) {
@@ -100,42 +113,4 @@ public class ReturnRequestController {
         ReturnRequestResponseDTO dto = returnRequestService.getById(requestId);
         return ResponseEntity.ok(ApiResponse.success("Return request fetched successfully", dto));
     }
-//    @PatchMapping("/{requestId}/status")
-//    public ResponseEntity<ApiResponse<ReturnRequestResponseDTO>> updateStatus(
-//            @PathVariable Long requestId,
-//            @RequestBody UpdateReturnStatusDTO request
-//    ) {
-//        ReturnRequest updatedRequest;
-//
-//        switch (request.getStatus()) {
-//            case APPROVED:
-//                updatedRequest = returnRequestService.approveRequest(requestId);
-//                break;
-//            case REJECTED:
-//                updatedRequest = returnRequestService.rejectRequest(requestId, request.getRejectionReason());
-//                break;
-//            case RECEIVED_RETURN:
-//                updatedRequest = returnRequestService.markAsReceivedReturn(requestId);
-//                break;
-//            case REFUND_PENDING:
-//                updatedRequest = returnRequestService.markRefundPending(requestId);
-//                break;
-//            case REFUND_INFO_INVALID:
-//                updatedRequest = returnRequestService.markRefundInfoInvalid(requestId, request.getRefundNote());
-//                break;
-//            case REFUNDED:
-//                updatedRequest = returnRequestService.markAsRefunded(requestId);
-//                break;
-//            case COMPLETED:
-//                updatedRequest = returnRequestService.completeRequest(requestId);
-//                break;
-//            default:
-//                throw new RuntimeException("Invalid status");
-//        }
-//
-//        ReturnRequestResponseDTO data = returnRequestService.mapToDTO(updatedRequest);
-//        return ResponseEntity.ok(ApiResponse.success("Status updated successfully", data));
-//    }
-
-
 }

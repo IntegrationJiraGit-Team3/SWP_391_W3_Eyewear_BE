@@ -1,15 +1,11 @@
 package com.fpt.glasseshop.service;
 
 import com.fpt.glasseshop.entity.*;
-import com.fpt.glasseshop.entity.dto.ReturnRequestDTO;
-import com.fpt.glasseshop.entity.dto.ReturnRequestResponseDTO;
-
-import com.fpt.glasseshop.entity.dto.UpdateRefundBankInfoDTO;
+import com.fpt.glasseshop.entity.dto.*;
 import com.fpt.glasseshop.repository.*;
 import lombok.RequiredArgsConstructor;
 import org.apache.coyote.BadRequestException;
 import org.springframework.security.access.AccessDeniedException;
-
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,6 +19,7 @@ import java.util.List;
 public class ReturnRequestService {
 
     private final ReturnRequestRepository returnRequestRepo;
+    private final ReturnRequestTransactionRepository returnRequestTransactionRepository;
     private final OrderRepository orderRepository;
     private final UserAccountRepository userAccountRepository;
     private final OrderItemRepository orderItemRepository;
@@ -30,12 +27,8 @@ public class ReturnRequestService {
     private final NotificationService notificationService;
     private final ProductVariantRepository proVariantRepo;
 
-
     private UserAccount getCurrentUser() {
         String email = SecurityContextHolder.getContext().getAuthentication().getName();
-        String role = SecurityContextHolder.getContext().getAuthentication().getAuthorities().toString();
-        System.out.println("EMAIL FROM SECURITY CONTEXT = " + email);
-        System.out.println("TOKEN ROLE = " + role);
         if (email == null) {
             throw new AccessDeniedException("User is not authenticated");
         }
@@ -47,9 +40,9 @@ public class ReturnRequestService {
     public ReturnRequestResponseDTO getById(Long requestId) {
         ReturnRequest request = returnRequestRepo.findById(requestId)
                 .orElseThrow(() -> new RuntimeException("Return request not found"));
-
         return mapToDTO(request);
     }
+
     private List<OrderItem> getComboItems(Order order) {
         if (order == null || order.getOrderItems() == null) {
             throw new RuntimeException("Order items not found");
@@ -61,9 +54,7 @@ public class ReturnRequestService {
                         "PRESCRIPTION".equalsIgnoreCase(i.getFulfillmentType())
         );
 
-        boolean hasFrame = order.getOrderItems().stream().anyMatch(i ->
-                i.getVariantId() != null
-        );
+        boolean hasFrame = order.getOrderItems().stream().anyMatch(i -> i.getVariantId() != null);
 
         if (!(hasLens && hasFrame)) {
             throw new RuntimeException("This order is not a combo order");
@@ -72,12 +63,11 @@ public class ReturnRequestService {
         return order.getOrderItems();
     }
 
+    @Transactional
     public ReturnRequestResponseDTO createReturnRequest(ReturnRequestDTO dto) throws BadRequestException {
-
         UserAccount currentUser = getCurrentUser();
-        // combo
-        if (Boolean.TRUE.equals(dto.getIsComboRequest())) {
 
+        if (Boolean.TRUE.equals(dto.getIsComboRequest())) {
             if (dto.getOrderId() == null) {
                 throw new BadRequestException("Order id is required for combo return");
             }
@@ -85,17 +75,14 @@ public class ReturnRequestService {
             Order order = orderRepository.findById(dto.getOrderId())
                     .orElseThrow(() -> new RuntimeException("Order not found"));
 
-            // check owner
             if (order.getUser() == null || !order.getUser().getUserId().equals(currentUser.getUserId())) {
                 throw new BadRequestException("You are not allowed to return this order");
             }
 
-            // chỉ cho phép delivered
-            if (!"DELIVERED".equalsIgnoreCase(order.getStatus())) {
+            if (!"DELIVERED".equalsIgnoreCase(order.getStatus()) && !"COMPLETED".equalsIgnoreCase(order.getStatus())) {
                 throw new BadRequestException("Only delivered orders can be returned");
             }
 
-            // validate reason
             if (dto.getReason() == null || dto.getReason().trim().isEmpty()) {
                 throw new BadRequestException("Reason is required");
             }
@@ -106,14 +93,9 @@ public class ReturnRequestService {
                             : ReturnRequest.RequestType.RETURN;
 
             if (requestType == ReturnRequest.RequestType.RETURN) {
-                validateRefundBankInfo(
-                        dto.getBankAccountNumber(),
-                        dto.getBankName(),
-                        dto.getBankAccountHolder()
-                );
+                validateRefundBankInfo(dto.getBankAccountNumber(), dto.getBankName(), dto.getBankAccountHolder());
             }
 
-            // lấy item đầu tiên làm anchor
             OrderItem firstItem = order.getOrderItems().get(0);
 
             ReturnRequest request = ReturnRequest.builder()
@@ -129,32 +111,29 @@ public class ReturnRequestService {
                     .bankAccountHolder(requestType == ReturnRequest.RequestType.RETURN ? dto.getBankAccountHolder() : null)
                     .build();
 
-
             ReturnRequest saved = returnRequestRepo.save(request);
-
+            logTransaction(saved, ReturnRequestTransaction.Action.CREATED, null, ReturnRequest.ReturnStatus.PENDING, null, null, null, null);
             return mapToDTO(saved);
         }
 
         OrderItem orderItem = orderItemRepository.findById(dto.getOrderItemId())
-                .orElseThrow(() -> new RuntimeException("Order not found"));
+                .orElseThrow(() -> new RuntimeException("Order item not found"));
         Order order = orderItem.getOrder();
 
-        // 1. check owner
         if (order.getUser() == null || !order.getUser().getUserId().equals(currentUser.getUserId())) {
             throw new BadRequestException("You are not allowed to return this order item");
         }
+
         if (isComboOrderItem(orderItem)) {
             throw new BadRequestException(
                     "This product was purchased as a glasses + lens combo. Please return/exchange the whole combo instead of individual items."
             );
         }
 
-        // 2. đơn delivered mới được đổi/trả
-        if (!"DELIVERED".equalsIgnoreCase(order.getStatus())) {
+        if (!"DELIVERED".equalsIgnoreCase(order.getStatus()) && !"COMPLETED".equalsIgnoreCase(order.getStatus())) {
             throw new BadRequestException("Only delivered orders can be returned");
         }
 
-        // 4. validate return quantity
         if (dto.getReturnQuantity() == null || dto.getReturnQuantity() <= 0) {
             throw new BadRequestException("Return quantity must be greater than 0");
         }
@@ -163,7 +142,10 @@ public class ReturnRequestService {
             throw new BadRequestException("Return quantity cannot exceed purchased quantity");
         }
 
-        Integer requestedQty = returnRequestRepo.sumRequestedQuantityByOrderItemId(orderItem.getOrderItemId(),ReturnRequest.ReturnStatus.REJECTED);
+        Integer requestedQty = returnRequestRepo.sumRequestedQuantityByOrderItemId(
+                orderItem.getOrderItemId(),
+                ReturnRequest.ReturnStatus.REJECTED
+        );
 
         int remainingQty = orderItem.getQuantity() - (requestedQty != null ? requestedQty : 0);
 
@@ -175,39 +157,21 @@ public class ReturnRequestService {
             throw new BadRequestException("Only " + remainingQty + " item(s) remaining for return/exchange");
         }
 
-        // 5. check time 7 day
-        if (order.getDeliveredAt() != null &&
-                order.getDeliveredAt().plusDays(7).isBefore(LocalDateTime.now())) {
+        if (order.getDeliveredAt() != null && order.getDeliveredAt().plusDays(7).isBefore(LocalDateTime.now())) {
             throw new BadRequestException("Return period expired");
         }
 
-        // 6. validate reason
         if (dto.getReason() == null || dto.getReason().trim().isEmpty()) {
             throw new BadRequestException("Reason is required");
         }
 
-//        if ("RETURN".equalsIgnoreCase(dto.getRequestType())) {
-//            if (dto.getBankAccountNumber() == null || dto.getBankAccountNumber().trim().isEmpty()) {
-//                throw new BadRequestException("Bank account number is required for refund");
-//            }
-//            if (dto.getBankName() == null || dto.getBankName().trim().isEmpty()) {
-//                throw new BadRequestException("Bank name is required for refund");
-//            }
-//            if (dto.getBankAccountHolder() == null || dto.getBankAccountHolder().trim().isEmpty()) {
-//                throw new BadRequestException("Bank account holder is required for refund");
-//            }
-//        }
         ReturnRequest.RequestType requestType =
                 "EXCHANGE".equalsIgnoreCase(dto.getRequestType())
                         ? ReturnRequest.RequestType.EXCHANGE
                         : ReturnRequest.RequestType.RETURN;
 
         if (requestType == ReturnRequest.RequestType.RETURN) {
-            validateRefundBankInfo(
-                    dto.getBankAccountNumber(),
-                    dto.getBankName(),
-                    dto.getBankAccountHolder()
-            );
+            validateRefundBankInfo(dto.getBankAccountNumber(), dto.getBankName(), dto.getBankAccountHolder());
         }
 
         ReturnRequest request = ReturnRequest.builder()
@@ -224,12 +188,13 @@ public class ReturnRequestService {
                 .build();
 
         ReturnRequest saved = returnRequestRepo.save(request);
+        logTransaction(saved, ReturnRequestTransaction.Action.CREATED, null, ReturnRequest.ReturnStatus.PENDING, null, null, null, null);
 
         notificationService.notifyAdmins(
-            "New Return Request",
-            "A new " + saved.getRequestType() + " request has been submitted for item " + orderItem.getProductName(),
-            "RETURN",
-            saved.getRequestId()
+                "New Return Request",
+                "A new " + saved.getRequestType() + " request has been submitted for item " + orderItem.getProductName(),
+                "RETURN",
+                saved.getRequestId()
         );
 
         return mapToDTO(saved);
@@ -245,25 +210,17 @@ public class ReturnRequestService {
                         "PRESCRIPTION".equalsIgnoreCase(i.getFulfillmentType())
         );
 
-        boolean hasFrameInOrder = order.getOrderItems().stream().anyMatch(i ->
-                i.getVariantId() != null
-        );
+        boolean hasFrameInOrder = order.getOrderItems().stream().anyMatch(i -> i.getVariantId() != null);
 
         return hasLensInOrder && hasFrameInOrder;
     }
 
     public List<ReturnRequestResponseDTO> getAll() {
-        return returnRequestRepo.findAll()
-                .stream()
-                .map(this::mapToDTO)
-                .toList();
+        return returnRequestRepo.findAll().stream().map(this::mapToDTO).toList();
     }
 
     public List<ReturnRequestResponseDTO> getByOrderItemId(Long orderItemId) {
-        return returnRequestRepo.findAllByOrderItemOrderItemId(orderItemId)
-                .stream()
-                .map(this::mapToDTO)
-                .toList();
+        return returnRequestRepo.findAllByOrderItemOrderItemId(orderItemId).stream().map(this::mapToDTO).toList();
     }
 
     @Transactional
@@ -272,6 +229,7 @@ public class ReturnRequestService {
                 .orElseThrow(() -> new RuntimeException("Return request not found"));
 
         validatePendingRequest(request);
+        ReturnRequest.ReturnStatus before = request.getStatus();
 
         if (request.getRequestType() == ReturnRequest.RequestType.EXCHANGE) {
             validateAndReserveStockForExchange(request);
@@ -282,10 +240,10 @@ public class ReturnRequestService {
         }
 
         request.setResolvedAt(LocalDateTime.now());
-
         ReturnRequest saved = returnRequestRepo.save(request);
 
-        // notify SAU KHI set status
+        logTransaction(saved, ReturnRequestTransaction.Action.APPROVED, before, saved.getStatus(), null, null, null, null);
+
         UserAccount user = request.getOrderItem().getOrder().getUser();
         notificationService.createNotification(
                 user,
@@ -299,7 +257,7 @@ public class ReturnRequestService {
 
         return saved;
     }
-    //nhận hàng
+
     @Transactional
     public ReturnRequest markAsReceivedReturn(Long requestId) {
         ReturnRequest request = returnRequestRepo.findById(requestId)
@@ -313,9 +271,11 @@ public class ReturnRequestService {
             throw new RuntimeException("Only waiting return requests can be marked as received");
         }
 
+        ReturnRequest.ReturnStatus before = request.getStatus();
         request.setStatus(ReturnRequest.ReturnStatus.RECEIVED_RETURN);
-
         ReturnRequest saved = returnRequestRepo.save(request);
+
+        logTransaction(saved, ReturnRequestTransaction.Action.RECEIVED_RETURN, before, saved.getStatus(), null, null, null, null);
 
         UserAccount user = request.getOrderItem().getOrder().getUser();
         notificationService.createNotification(
@@ -328,6 +288,7 @@ public class ReturnRequestService {
 
         return saved;
     }
+
     @Transactional
     public ReturnRequest markRefundPending(Long requestId) {
         ReturnRequest request = returnRequestRepo.findById(requestId)
@@ -342,10 +303,12 @@ public class ReturnRequestService {
             throw new RuntimeException("Only received or corrected requests can move to refund pending");
         }
 
+        ReturnRequest.ReturnStatus before = request.getStatus();
         request.setStatus(ReturnRequest.ReturnStatus.REFUND_PENDING);
         request.setRefundNote(null);
-
         ReturnRequest saved = returnRequestRepo.save(request);
+
+        logTransaction(saved, ReturnRequestTransaction.Action.REFUND_PENDING, before, saved.getStatus(), null, null, null, null);
 
         UserAccount user = request.getOrderItem().getOrder().getUser();
         notificationService.createNotification(
@@ -358,6 +321,7 @@ public class ReturnRequestService {
 
         return saved;
     }
+
     @Transactional
     public ReturnRequest markRefundInfoInvalid(Long requestId, String note) {
         ReturnRequest request = returnRequestRepo.findById(requestId)
@@ -376,10 +340,12 @@ public class ReturnRequestService {
             throw new RuntimeException("Refund note is required");
         }
 
+        ReturnRequest.ReturnStatus before = request.getStatus();
         request.setStatus(ReturnRequest.ReturnStatus.REFUND_INFO_INVALID);
         request.setRefundNote(note.trim());
-
         ReturnRequest saved = returnRequestRepo.save(request);
+
+        logTransaction(saved, ReturnRequestTransaction.Action.REFUND_INFO_INVALID, before, saved.getStatus(), null, null, null, note.trim());
 
         UserAccount user = request.getOrderItem().getOrder().getUser();
         notificationService.createNotification(
@@ -392,17 +358,17 @@ public class ReturnRequestService {
 
         return saved;
     }
+
     @Transactional
     public ReturnRequestResponseDTO updateRefundBankInfo(Long requestId, UpdateRefundBankInfoDTO dto) {
         ReturnRequest request = returnRequestRepo.findById(requestId)
                 .orElseThrow(() -> new RuntimeException("Return request not found"));
 
         UserAccount currentUser = getCurrentUser();
-
         OrderItem orderItem = request.getOrderItem();
-        if (orderItem == null || orderItem.getOrder() == null ||
-                orderItem.getOrder().getUser() == null ||
-                !orderItem.getOrder().getUser().getUserId().equals(currentUser.getUserId())) {
+
+        if (orderItem == null || orderItem.getOrder() == null || orderItem.getOrder().getUser() == null
+                || !orderItem.getOrder().getUser().getUserId().equals(currentUser.getUserId())) {
             throw new RuntimeException("You are not allowed to update this refund info");
         }
 
@@ -414,19 +380,17 @@ public class ReturnRequestService {
             throw new RuntimeException("Refund info can only be updated when marked invalid");
         }
 
-        validateRefundBankInfo(
-                dto.getBankAccountNumber(),
-                dto.getBankName(),
-                dto.getBankAccountHolder()
-        );
+        validateRefundBankInfo(dto.getBankAccountNumber(), dto.getBankName(), dto.getBankAccountHolder());
 
+        ReturnRequest.ReturnStatus before = request.getStatus();
         request.setBankAccountNumber(dto.getBankAccountNumber());
         request.setBankName(dto.getBankName());
         request.setBankAccountHolder(dto.getBankAccountHolder());
         request.setRefundNote(null);
         request.setStatus(ReturnRequest.ReturnStatus.REFUND_PENDING);
-
         ReturnRequest saved = returnRequestRepo.save(request);
+
+        logTransaction(saved, ReturnRequestTransaction.Action.REFUND_INFO_UPDATED, before, saved.getStatus(), null, null, null, null);
 
         notificationService.notifyAdmins(
                 "Refund Info Updated",
@@ -437,8 +401,9 @@ public class ReturnRequestService {
 
         return mapToDTO(saved);
     }
+
     @Transactional
-    public ReturnRequest markAsRefunded(Long requestId) {
+    public ReturnRequest markAsRefunded(Long requestId, RefundProcessDTO dto) {
         ReturnRequest request = returnRequestRepo.findById(requestId)
                 .orElseThrow(() -> new RuntimeException("Return request not found"));
 
@@ -451,22 +416,82 @@ public class ReturnRequestService {
             throw new RuntimeException("Only eligible requests can be refunded");
         }
 
+        if (dto == null) {
+            throw new RuntimeException("Refund information is required");
+        }
+
+        if (dto.getPaymentMethod() == null || !"BANK_TRANSFER".equalsIgnoreCase(dto.getPaymentMethod().trim())) {
+            throw new RuntimeException("Only BANK_TRANSFER is supported");
+        }
+
+        if (dto.getTransactionReference() == null || dto.getTransactionReference().trim().isEmpty()) {
+            throw new RuntimeException("Transaction reference is required");
+        }
+
+        BigDecimal refundAmount = calculateRefundAmount(request);
+        ReturnRequest.ReturnStatus before = request.getStatus();
+
         request.setStatus(ReturnRequest.ReturnStatus.REFUNDED);
         request.setResolvedAt(LocalDateTime.now());
-
         ReturnRequest saved = returnRequestRepo.save(request);
+
+        logTransaction(
+                saved,
+                ReturnRequestTransaction.Action.REFUNDED,
+                before,
+                saved.getStatus(),
+                refundAmount,
+                "BANK_TRANSFER",
+                dto.getTransactionReference().trim(),
+                dto.getNote() != null ? dto.getNote().trim() : null
+        );
 
         UserAccount user = request.getOrderItem().getOrder().getUser();
         notificationService.createNotification(
                 user,
                 "Refund Completed",
-                "Your refund has been successfully processed.",
+                "We have transferred your refund. Please check your bank account and confirm after receiving the money.",
                 "RETURN",
                 request.getRequestId()
         );
 
         return saved;
     }
+
+    @Transactional
+    public ReturnRequest confirmRefundReceivedByCustomer(Long requestId) {
+        ReturnRequest request = returnRequestRepo.findById(requestId)
+                .orElseThrow(() -> new RuntimeException("Return request not found"));
+
+        UserAccount currentUser = getCurrentUser();
+        OrderItem orderItem = request.getOrderItem();
+
+        if (orderItem == null || orderItem.getOrder() == null || orderItem.getOrder().getUser() == null
+                || !orderItem.getOrder().getUser().getUserId().equals(currentUser.getUserId())) {
+            throw new RuntimeException("You are not allowed to confirm this refund");
+        }
+
+        if (request.getStatus() != ReturnRequest.ReturnStatus.REFUNDED) {
+            throw new RuntimeException("Only refunded requests can be confirmed by customer");
+        }
+
+        ReturnRequest.ReturnStatus before = request.getStatus();
+        request.setStatus(ReturnRequest.ReturnStatus.COMPLETED);
+        request.setResolvedAt(LocalDateTime.now());
+        ReturnRequest saved = returnRequestRepo.save(request);
+
+        logTransaction(saved, ReturnRequestTransaction.Action.CUSTOMER_CONFIRMED_REFUND_RECEIVED, before, saved.getStatus(), null, null, null, null);
+
+        notificationService.notifyAdmins(
+                "Customer Confirmed Refund",
+                "Customer has confirmed receiving the refund for request #" + requestId,
+                "RETURN",
+                requestId
+        );
+
+        return saved;
+    }
+
     private void validateRefundBankInfo(String bankAccountNumber, String bankName, String bankAccountHolder) {
         if (bankAccountNumber == null || bankAccountNumber.trim().isEmpty()) {
             throw new RuntimeException("Bank account number is required for refund");
@@ -478,6 +503,7 @@ public class ReturnRequestService {
             throw new RuntimeException("Bank account holder is required for refund");
         }
     }
+
     private void validateAndReserveStockForExchange(ReturnRequest request) {
         OrderItem orderItem = getRequiredOrderItem(request);
 
@@ -497,8 +523,7 @@ public class ReturnRequestService {
 
         if (currentStock < requestedQty) {
             throw new RuntimeException(
-                    "Not enough stock for exchange. Available: " + currentStock
-                            + ", requested: " + requestedQty
+                    "Not enough stock for exchange. Available: " + currentStock + ", requested: " + requestedQty
             );
         }
 
@@ -517,20 +542,21 @@ public class ReturnRequestService {
             throw new RuntimeException("Rejection reason is required");
         }
 
+        ReturnRequest.ReturnStatus before = request.getStatus();
         request.setStatus(ReturnRequest.ReturnStatus.REJECTED);
         request.setRejectionReason(rejectionReason.trim());
         request.setResolvedAt(LocalDateTime.now());
-
         ReturnRequest saved = returnRequestRepo.save(request);
 
-        // Notify user
+        logTransaction(saved, ReturnRequestTransaction.Action.REJECTED, before, saved.getStatus(), null, null, null, rejectionReason.trim());
+
         UserAccount user = request.getOrderItem().getOrder().getUser();
         notificationService.createNotification(
-            user,
-            "Return Request Rejected",
-            "Your " + request.getRequestType() + " request for " + request.getOrderItem().getProductName() + " has been rejected. Reason: " + rejectionReason,
-            "RETURN",
-            request.getRequestId()
+                user,
+                "Return Request Rejected",
+                "Your " + request.getRequestType() + " request for " + request.getOrderItem().getProductName() + " has been rejected. Reason: " + rejectionReason,
+                "RETURN",
+                request.getRequestId()
         );
 
         return saved;
@@ -541,30 +567,38 @@ public class ReturnRequestService {
         ReturnRequest request = returnRequestRepo.findById(requestId)
                 .orElseThrow(() -> new RuntimeException("Return request not found"));
 
-        if (request.getStatus() != ReturnRequest.ReturnStatus.APPROVED) {
-            throw new RuntimeException("Only approved requests can be completed");
+        if (request.getRequestType() == ReturnRequest.RequestType.EXCHANGE) {
+            if (request.getStatus() != ReturnRequest.ReturnStatus.APPROVED) {
+                throw new RuntimeException("Only approved exchange requests can be completed");
+            }
+
+            ReturnRequest.ReturnStatus before = request.getStatus();
+            request.setStatus(ReturnRequest.ReturnStatus.COMPLETED);
+            request.setResolvedAt(LocalDateTime.now());
+            ReturnRequest saved = returnRequestRepo.save(request);
+
+            logTransaction(saved, ReturnRequestTransaction.Action.COMPLETED, before, saved.getStatus(), null, null, null, null);
+
+            UserAccount user = request.getOrderItem().getOrder().getUser();
+            notificationService.createNotification(
+                    user,
+                    "Exchange Process Completed",
+                    "Your exchange process for " + request.getOrderItem().getProductName() + " is now complete.",
+                    "RETURN",
+                    request.getRequestId()
+            );
+
+            return saved;
         }
 
-        request.setStatus(ReturnRequest.ReturnStatus.COMPLETED);
-        request.setResolvedAt(LocalDateTime.now());
-
-        ReturnRequest saved = returnRequestRepo.save(request);
-
-        // Notify user
-        UserAccount user = request.getOrderItem().getOrder().getUser();
-        notificationService.createNotification(
-            user,
-            "Return Process Completed",
-            "The " + request.getRequestType() + " process for " + request.getOrderItem().getProductName() + " is now complete.",
-            "RETURN",
-            request.getRequestId()
-        );
-
-        return saved;
+        return confirmRefundReceivedByCustomer(requestId);
     }
 
     public ReturnRequestResponseDTO mapToDTO(ReturnRequest request) {
         OrderItem orderItem = request.getOrderItem();
+        BigDecimal refundAmount = request.getRequestType() == ReturnRequest.RequestType.RETURN
+                ? calculateRefundAmount(request)
+                : null;
 
         return ReturnRequestResponseDTO.builder()
                 .requestId(request.getRequestId())
@@ -593,9 +627,10 @@ public class ReturnRequestService {
                 .bankName(request.getBankName())
                 .bankAccountHolder(request.getBankAccountHolder())
                 .refundNote(request.getRefundNote())
+                .refundAmount(refundAmount)
+                .transactions(getTransactionDTOs(request.getRequestId()))
                 .build();
     }
-
 
     private void validatePendingRequest(ReturnRequest request) {
         if (request.getStatus() != ReturnRequest.ReturnStatus.PENDING) {
@@ -609,8 +644,6 @@ public class ReturnRequestService {
         Integer exchangeQty = request.getReturnQuantity();
 
         List<OrderItem> sourceItems;
-
-        // nếu order gốc là combo thì clone cả bộ
         if (isComboOrderItem(anchorItem)) {
             sourceItems = getComboItems(oldOrder);
         } else {
@@ -618,13 +651,11 @@ public class ReturnRequestService {
         }
 
         Order newOrder = createReplacementOrderFromItems(sourceItems, exchangeQty);
-
         OrderItem firstSavedItem = null;
 
         for (OrderItem oldItem : sourceItems) {
             OrderItem cloned = cloneOrderItem(oldItem, newOrder, exchangeQty);
             OrderItem savedNewItem = orderItemRepository.save(cloned);
-
             clonePrescriptionIfNeeded(oldItem, savedNewItem);
 
             if (firstSavedItem == null) {
@@ -635,6 +666,7 @@ public class ReturnRequestService {
         request.setReplacementOrderId(newOrder.getOrderId());
         request.setReplacementOrderItemId(firstSavedItem != null ? firstSavedItem.getOrderItemId() : null);
     }
+
     private Order createReplacementOrderFromItems(List<OrderItem> items, Integer quantity) {
         if (items == null || items.isEmpty()) {
             throw new RuntimeException("No items found for replacement order");
@@ -670,25 +702,6 @@ public class ReturnRequestService {
         return orderItem;
     }
 
-    private Order createReplacementOrder(OrderItem oldItem, Integer quantity) {
-        Order oldOrder = oldItem.getOrder();
-
-        BigDecimal totalPrice = oldItem.getUnitPrice()
-                .multiply(BigDecimal.valueOf(quantity));
-
-        return orderRepository.save(
-                Order.builder()
-                        .user(oldOrder.getUser())
-                        .status("PENDING")
-                        .paymentStatus("PAID")
-                        .paymentMethod("EXCHANGE")
-                        .shippingAddress(oldOrder.getShippingAddress())
-                        .billingAddress(oldOrder.getBillingAddress())
-                        .totalPrice(totalPrice)
-                        .build()
-        );
-    }
-
     private OrderItem cloneOrderItem(OrderItem oldItem, Order newOrder, Integer quantity) {
         return OrderItem.builder()
                 .order(newOrder)
@@ -697,19 +710,16 @@ public class ReturnRequestService {
                 .quantity(quantity)
                 .unitPrice(oldItem.getUnitPrice())
                 .fulfillmentType(oldItem.getFulfillmentType())
-
                 .variantId(oldItem.getVariantId())
                 .productId(oldItem.getProductId())
                 .productName(oldItem.getProductName())
                 .variantColor(oldItem.getVariantColor())
                 .variantSize(oldItem.getVariantSize())
                 .imageUrl(oldItem.getImageUrl())
-
                 .lensType(oldItem.getLensType())
                 .lensPrice(oldItem.getLensPrice())
                 .lensCoating(oldItem.getLensCoating())
                 .lensOptionId(oldItem.getLensOptionId())
-
                 .sphLeft(oldItem.getSphLeft())
                 .sphRight(oldItem.getSphRight())
                 .cylLeft(oldItem.getCylLeft())
@@ -718,8 +728,6 @@ public class ReturnRequestService {
                 .axisRight(oldItem.getAxisRight())
                 .addLeft(oldItem.getAddLeft())
                 .addRight(oldItem.getAddRight())
-
-
                 .isPreorder(oldItem.getIsPreorder())
                 .build();
     }
@@ -741,11 +749,64 @@ public class ReturnRequestService {
                         .axisRight(oldPrescription.getAxisRight())
                         .addLeft(oldPrescription.getAddLeft())
                         .addRight(oldPrescription.getAddRight())
-
                         .doctorName(oldPrescription.getDoctorName())
                         .expirationDate(oldPrescription.getExpirationDate())
                         .status(oldPrescription.getStatus())
                         .adminNote(oldPrescription.getAdminNote())
+                        .build()
+        );
+    }
+
+    private BigDecimal calculateRefundAmount(ReturnRequest request) {
+        if (request == null || request.getOrderItem() == null) {
+            return BigDecimal.ZERO;
+        }
+
+        OrderItem orderItem = request.getOrderItem();
+        BigDecimal unitPrice = orderItem.getUnitPrice() != null ? orderItem.getUnitPrice() : BigDecimal.ZERO;
+        BigDecimal lensPrice = orderItem.getLensPrice() != null ? orderItem.getLensPrice() : BigDecimal.ZERO;
+        int quantity = request.getReturnQuantity() != null ? request.getReturnQuantity() : 0;
+
+        return unitPrice.add(lensPrice).multiply(BigDecimal.valueOf(quantity));
+    }
+
+    private List<ReturnRequestTransactionDTO> getTransactionDTOs(Long requestId) {
+        return returnRequestTransactionRepository.findByReturnRequestRequestIdOrderByCreatedAtAsc(requestId)
+                .stream()
+                .map(tx -> ReturnRequestTransactionDTO.builder()
+                        .transactionId(tx.getTransactionId())
+                        .action(tx.getAction() != null ? tx.getAction().name() : null)
+                        .statusBefore(tx.getStatusBefore() != null ? tx.getStatusBefore().name() : null)
+                        .statusAfter(tx.getStatusAfter() != null ? tx.getStatusAfter().name() : null)
+                        .amount(tx.getAmount())
+                        .paymentMethod(tx.getPaymentMethod())
+                        .transactionReference(tx.getTransactionReference())
+                        .note(tx.getNote())
+                        .createdAt(tx.getCreatedAt())
+                        .build())
+                .toList();
+    }
+
+    private void logTransaction(
+            ReturnRequest request,
+            ReturnRequestTransaction.Action action,
+            ReturnRequest.ReturnStatus statusBefore,
+            ReturnRequest.ReturnStatus statusAfter,
+            BigDecimal amount,
+            String paymentMethod,
+            String transactionReference,
+            String note
+    ) {
+        returnRequestTransactionRepository.save(
+                ReturnRequestTransaction.builder()
+                        .returnRequest(request)
+                        .action(action)
+                        .statusBefore(statusBefore)
+                        .statusAfter(statusAfter)
+                        .amount(amount)
+                        .paymentMethod(paymentMethod)
+                        .transactionReference(transactionReference)
+                        .note(note)
                         .build()
         );
     }

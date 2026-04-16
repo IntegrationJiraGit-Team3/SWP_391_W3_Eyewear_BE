@@ -1,5 +1,6 @@
 package com.fpt.glasseshop.service;
 
+import com.fpt.glasseshop.entity.dto.response.AdminDashboardAnalyticsResponse;
 import com.fpt.glasseshop.entity.dto.response.AdminDashboardSummaryResponse;
 import com.fpt.glasseshop.entity.dto.response.RevenueResponse;
 import org.apache.coyote.BadRequestException;
@@ -12,4 +13,6 @@ public interface ReportService {
     RevenueResponse getOverallRevenue();
 
     AdminDashboardSummaryResponse getDashboardSummary(LocalDate fromDate, LocalDate toDate) throws BadRequestException;
+
+    AdminDashboardAnalyticsResponse getDashboardAnalytics(LocalDate fromDate, LocalDate toDate, String groupBy) throws BadRequestException;
 }

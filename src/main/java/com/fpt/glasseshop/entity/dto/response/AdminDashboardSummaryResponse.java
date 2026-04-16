@@ -20,6 +20,7 @@ public class AdminDashboardSummaryResponse {
     private BigDecimal grossRevenue;
     private BigDecimal refundedAmount;
     private BigDecimal netRevenue;
+    private BigDecimal remainingRevenueAfterRefund;
 
     private BigDecimal collectedCash;
     private BigDecimal currentHeldMoney;

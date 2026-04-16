@@ -7,6 +7,7 @@ import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Data
 @NoArgsConstructor
@@ -28,7 +29,6 @@ public class ReturnRequestResponseDTO {
     private Integer returnQuantity;
     private Long replacementOrderItemId;
 
-    // Thông tin sản phẩm gốc
     private String productName;
     private String productImageUrl;
     private String variantColor;
@@ -36,7 +36,6 @@ public class ReturnRequestResponseDTO {
     private Integer purchasedQuantity;
     private BigDecimal unitPrice;
 
-    // Nếu là kính/lens thì thêm
     private String lensType;
     private String lensCoating;
 
@@ -44,4 +43,7 @@ public class ReturnRequestResponseDTO {
     private String bankName;
     private String bankAccountHolder;
     private String refundNote;
+
+    private BigDecimal refundAmount;
+    private List<ReturnRequestTransactionDTO> transactions;
 }

@@ -1,6 +1,7 @@
 package com.fpt.glasseshop.controller;
 
 import com.fpt.glasseshop.entity.dto.ApiResponse;
+import com.fpt.glasseshop.entity.dto.response.AdminDashboardAnalyticsResponse;
 import com.fpt.glasseshop.entity.dto.response.AdminDashboardSummaryResponse;
 import com.fpt.glasseshop.entity.dto.response.RevenueResponse;
 import com.fpt.glasseshop.service.ReportService;
@@ -40,5 +41,15 @@ public class ReportController {
     ) throws BadRequestException {
         AdminDashboardSummaryResponse summary = reportService.getDashboardSummary(fromDate, toDate);
         return ResponseEntity.ok(ApiResponse.success("Dashboard summary loaded successfully", summary));
+    }
+
+    @GetMapping("/dashboard-analytics")
+    public ResponseEntity<ApiResponse<AdminDashboardAnalyticsResponse>> getDashboardAnalytics(
+            @RequestParam LocalDate fromDate,
+            @RequestParam LocalDate toDate,
+            @RequestParam(defaultValue = "DAILY") String groupBy
+    ) throws BadRequestException {
+        AdminDashboardAnalyticsResponse response = reportService.getDashboardAnalytics(fromDate, toDate, groupBy);
+        return ResponseEntity.ok(ApiResponse.success("Dashboard analytics loaded successfully", response));
     }
 }

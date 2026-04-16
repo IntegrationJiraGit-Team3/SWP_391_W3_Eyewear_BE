@@ -43,4 +43,5 @@ public class AdminDashboardAnalyticsResponse {
     private List<OrderStatusReportResponse> orderStatusReport;
     private List<ProductReportResponse> bestSellingProductsByQuantity;
     private List<ProductReportResponse> bestSellingProductsByRevenue;
+    private List<CustomerPurchaseSummaryResponse> topCustomersBySpending;
 }

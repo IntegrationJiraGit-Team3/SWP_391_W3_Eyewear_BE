@@ -27,6 +27,8 @@ import java.util.stream.Collectors;
 @Service
 public class ReportServiceImpl implements ReportService {
 
+    private static final int TOP_CUSTOMERS_LIMIT = 20;
+
     @Autowired
     private OrderRepository orderRepo;
 
@@ -231,6 +233,7 @@ public class ReportServiceImpl implements ReportService {
                 .orderStatusReport(buildOrderStatusReport(currentOrdersInRange))
                 .bestSellingProductsByQuantity(buildTopProductsByQuantity(currentCompletedOrders))
                 .bestSellingProductsByRevenue(buildTopProductsByRevenue(currentCompletedOrders))
+                .topCustomersBySpending(buildTopCustomersBySpending(currentCompletedOrders))
                 .build();
     }
 
@@ -525,6 +528,55 @@ public class ReportServiceImpl implements ReportService {
                 .toList();
     }
 
+    private List<CustomerPurchaseSummaryResponse> buildTopCustomersBySpending(List<Order> completedOrders) {
+        Map<String, CustomerAccumulator> customerMap = new HashMap<>();
+
+        for (Order order : completedOrders) {
+            UserAccount user = order.getUser();
+            String key = user != null && user.getUserId() != null
+                    ? "U-" + user.getUserId()
+                    : "GUEST-" + normalizeGuestName(order.getFullName());
+
+            CustomerAccumulator accumulator = customerMap.computeIfAbsent(
+                    key,
+                    ignored -> new CustomerAccumulator(
+                            user != null ? user.getUserId() : null,
+                            resolveCustomerName(order, user))
+            );
+
+            accumulator.orderCount += 1;
+            accumulator.totalSpent = accumulator.totalSpent.add(getOrderAmount(order));
+        }
+
+        return customerMap.values().stream()
+                .sorted(Comparator.comparing(CustomerAccumulator::getTotalSpent).reversed())
+                .limit(TOP_CUSTOMERS_LIMIT)
+                .map(item -> CustomerPurchaseSummaryResponse.builder()
+                        .userId(item.userId)
+                        .customerName(item.customerName)
+                        .orderCount(item.orderCount)
+                        .totalSpent(item.totalSpent)
+                        .build())
+                .toList();
+    }
+
+    private String resolveCustomerName(Order order, UserAccount user) {
+        if (user != null && user.getName() != null && !user.getName().isBlank()) {
+            return user.getName().trim();
+        }
+        if (order.getFullName() != null && !order.getFullName().isBlank()) {
+            return order.getFullName().trim();
+        }
+        return "Guest";
+    }
+
+    private String normalizeGuestName(String fullName) {
+        if (fullName == null || fullName.isBlank()) {
+            return "UNKNOWN";
+        }
+        return fullName.trim().toUpperCase();
+    }
+
     private Map<String, ProductAccumulator> buildProductMap(List<Order> completedOrders) {
         Map<String, ProductAccumulator> map = new HashMap<>();
 
@@ -584,6 +636,22 @@ public class ReportServiceImpl implements ReportService {
 
         public BigDecimal getRevenue() {
             return revenue;
+        }
+    }
+
+    private static class CustomerAccumulator {
+        private final Long userId;
+        private final String customerName;
+        private long orderCount = 0L;
+        private BigDecimal totalSpent = BigDecimal.ZERO;
+
+        private CustomerAccumulator(Long userId, String customerName) {
+            this.userId = userId;
+            this.customerName = customerName;
+        }
+
+        public BigDecimal getTotalSpent() {
+            return totalSpent;
         }
     }
 }

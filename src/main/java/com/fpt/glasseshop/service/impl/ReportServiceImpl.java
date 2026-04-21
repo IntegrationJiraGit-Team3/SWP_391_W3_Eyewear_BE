@@ -2,10 +2,20 @@ package com.fpt.glasseshop.service.impl;
 
 import com.fpt.glasseshop.entity.Order;
 import com.fpt.glasseshop.entity.OrderItem;
+import com.fpt.glasseshop.entity.ProductVariant;
 import com.fpt.glasseshop.entity.ReturnRequest;
 import com.fpt.glasseshop.entity.UserAccount;
-import com.fpt.glasseshop.entity.dto.response.*;
+import com.fpt.glasseshop.entity.dto.response.AdminDashboardAnalyticsResponse;
+import com.fpt.glasseshop.entity.dto.response.AdminDashboardSummaryResponse;
+import com.fpt.glasseshop.entity.dto.response.CustomerPurchaseSummaryResponse;
+import com.fpt.glasseshop.entity.dto.response.DashboardTimePointResponse;
+import com.fpt.glasseshop.entity.dto.response.OrderStatusReportResponse;
+import com.fpt.glasseshop.entity.dto.response.ProductInventoryReportResponse;
+import com.fpt.glasseshop.entity.dto.response.ProductReportResponse;
+import com.fpt.glasseshop.entity.dto.response.ReturnStatusReportResponse;
+import com.fpt.glasseshop.entity.dto.response.RevenueResponse;
 import com.fpt.glasseshop.repository.OrderRepository;
+import com.fpt.glasseshop.repository.ProductVariantRepository;
 import com.fpt.glasseshop.repository.ReturnRequestRepository;
 import com.fpt.glasseshop.repository.UserAccountRepository;
 import com.fpt.glasseshop.service.ReportService;
@@ -21,13 +31,19 @@ import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
-import java.util.*;
-import java.util.stream.Collectors;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.EnumMap;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
 @Service
 public class ReportServiceImpl implements ReportService {
 
-    private static final int TOP_CUSTOMERS_LIMIT = 20;
+    private static final int TOP_CUSTOMERS_LIMIT = 10;
 
     @Autowired
     private OrderRepository orderRepo;
@@ -37,6 +53,9 @@ public class ReportServiceImpl implements ReportService {
 
     @Autowired
     private UserAccountRepository userAccountRepository;
+
+    @Autowired
+    private ProductVariantRepository productVariantRepository;
 
     @Override
     public RevenueResponse getRevenueBetween(LocalDate fromDate, LocalDate toDate) throws BadRequestException {
@@ -96,8 +115,8 @@ public class ReportServiceImpl implements ReportService {
         ));
         BigDecimal netRevenue = grossRevenue.subtract(refundedAmount);
 
-        BigDecimal collectedCash = orderRepo.calculateCollectedCash();
-        BigDecimal currentHeldMoney = orderRepo.calculateCurrentHeldMoney();
+        BigDecimal collectedCash = safeAmount(orderRepo.calculateCollectedCash());
+        BigDecimal currentHeldMoney = safeAmount(orderRepo.calculateCurrentHeldMoney());
 
         Long totalOrders = orderRepo.count();
         Long deliveredOrders = orderRepo.countDeliveredOrders();
@@ -105,9 +124,9 @@ public class ReportServiceImpl implements ReportService {
         Long processingOrders = orderRepo.countByOrderStatus("PROCESSING");
         Long shippedOrders = orderRepo.countByOrderStatus("SHIPPED");
         Long deliveringOrders = orderRepo.countByOrderStatus("DELIVERING");
-        Long shippingOrders = (shippedOrders == null ? 0L : shippedOrders) + (deliveringOrders == null ? 0L : deliveringOrders);
-        Long cancelledOrders = (orderRepo.countByOrderStatus("CANCELED") == null ? 0L : orderRepo.countByOrderStatus("CANCELED"))
-                + (orderRepo.countByOrderStatus("CANCELLED") == null ? 0L : orderRepo.countByOrderStatus("CANCELLED"));
+        Long shippingOrders = safeLong(shippedOrders) + safeLong(deliveringOrders);
+        Long cancelledOrders = safeLong(orderRepo.countByOrderStatus("CANCELED"))
+                + safeLong(orderRepo.countByOrderStatus("CANCELLED"));
 
         Long refundPendingCount = returnRequestRepository.countByReturnStatus(ReturnRequest.ReturnStatus.REFUND_PENDING);
         Long refundedCount = returnRequestRepository.countByReturnStatus(ReturnRequest.ReturnStatus.REFUNDED);
@@ -164,13 +183,13 @@ public class ReportServiceImpl implements ReportService {
                 .filter(this::isCompletedOrder)
                 .toList();
 
-        BigDecimal totalRevenue = sumOrderRevenue(currentCompletedOrders);
+        BigDecimal grossRevenue = sumOrderRevenue(currentCompletedOrders);
         BigDecimal previousRevenue = sumOrderRevenue(previousCompletedOrders);
 
         long soldItems = sumSoldItems(currentCompletedOrders);
         long previousSoldItems = sumSoldItems(previousCompletedOrders);
 
-        BigDecimal projectedRevenue = currentOrdersInRange.stream()
+        BigDecimal pendingRevenue = currentOrdersInRange.stream()
                 .filter(this::isProjectedOrder)
                 .map(this::getOrderAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -188,9 +207,12 @@ public class ReportServiceImpl implements ReportService {
         long newCustomers = currentNewCustomers.size();
         long previousNewCustomersCount = previousNewCustomers.size();
 
-        List<ReturnRequest> currentRefundedReturns = allReturns.stream()
+        List<ReturnRequest> currentReturnRequests = allReturns.stream()
+                .filter(request -> isWithinRange(getSafeReturnTrackingDate(request), fromDate, toDate))
+                .toList();
+
+        List<ReturnRequest> currentRefundedReturns = currentReturnRequests.stream()
                 .filter(this::isActuallyRefunded)
-                .filter(request -> isWithinRange(getSafeRefundDate(request), fromDate, toDate))
                 .toList();
 
         List<ReturnRequest> previousRefundedReturns = allReturns.stream()
@@ -200,39 +222,72 @@ public class ReportServiceImpl implements ReportService {
 
         BigDecimal refundedAmount = sumRefundAmount(currentRefundedReturns);
         BigDecimal previousRefundedAmount = sumRefundAmount(previousRefundedReturns);
-        BigDecimal remainingRevenueAfterRefund = totalRevenue.subtract(refundedAmount);
+        BigDecimal netRevenue = grossRevenue.subtract(refundedAmount);
 
         long pendingOrders = currentOrdersInRange.stream().filter(this::isPendingOrder).count();
         long processingOrders = currentOrdersInRange.stream().filter(this::isProcessingOrder).count();
         long shippingOrders = currentOrdersInRange.stream().filter(this::isShippingOrder).count();
         long cancelledOrders = currentOrdersInRange.stream().filter(this::isCancelledOrder).count();
         long completedOrders = currentCompletedOrders.size();
+        long totalOrders = currentOrdersInRange.size();
+
+        long refundPendingCount = currentReturnRequests.stream().filter(this::isRefundPending).count();
+        long refundedCount = currentRefundedReturns.size();
+        long pendingReturnRequests = currentReturnRequests.stream().filter(this::isPendingReturnRequest).count();
+        long totalReturnRequests = currentReturnRequests.size();
+
+        double refundRate = percentage(refundedCount, totalOrders);
+        double completionRate = percentage(completedOrders, totalOrders);
 
         return AdminDashboardAnalyticsResponse.builder()
                 .fromDate(fromDate)
                 .toDate(toDate)
                 .groupBy(normalizedGroupBy)
-                .totalRevenue(totalRevenue)
-                .projectedRevenue(projectedRevenue)
+                .totalRevenue(grossRevenue)
+                .grossRevenue(grossRevenue)
+                .netRevenue(netRevenue)
+                .pendingRevenue(pendingRevenue)
+                .projectedRevenue(pendingRevenue)
                 .refundedAmount(refundedAmount)
-                .remainingRevenueAfterRefund(remainingRevenueAfterRefund)
-                .totalCustomers((long) totalCustomers)
+                .remainingRevenueAfterRefund(netRevenue)
+                .totalCustomers(totalCustomers)
                 .newCustomers(newCustomers)
                 .soldItems(soldItems)
-                .totalOrders((long) currentOrdersInRange.size())
+                .totalOrders(totalOrders)
                 .completedOrders(completedOrders)
                 .pendingOrders(pendingOrders)
                 .processingOrders(processingOrders)
                 .shippingOrders(shippingOrders)
                 .cancelledOrders(cancelledOrders)
-                .revenueChangePercent(calculateChangePercent(totalRevenue, previousRevenue))
+                .totalReturnRequests(totalReturnRequests)
+                .pendingReturnRequests(pendingReturnRequests)
+                .refundPendingCount(refundPendingCount)
+                .refundedCount(refundedCount)
+                .revenueChangePercent(calculateChangePercent(grossRevenue, previousRevenue))
                 .customerChangePercent(calculateChangePercent(BigDecimal.valueOf(newCustomers), BigDecimal.valueOf(previousNewCustomersCount)))
                 .soldItemsChangePercent(calculateChangePercent(BigDecimal.valueOf(soldItems), BigDecimal.valueOf(previousSoldItems)))
                 .refundedChangePercent(calculateChangePercent(refundedAmount, previousRefundedAmount))
-                .timeline(buildTimeline(currentCompletedOrders, currentNewCustomers, currentRefundedReturns, fromDate, toDate, normalizedGroupBy))
-                .orderStatusReport(buildOrderStatusReport(currentOrdersInRange))
+                .refundRate(refundRate)
+                .completionRate(completionRate)
+                .orderStatusReport(buildOrderStatusReport(
+                        pendingOrders,
+                        processingOrders,
+                        shippingOrders,
+                        completedOrders,
+                        cancelledOrders
+                ))
+                .returnStatusReport(buildReturnStatusReport(currentReturnRequests))
+                .timeline(buildTimeline(
+                        fromDate,
+                        toDate,
+                        normalizedGroupBy,
+                        currentCompletedOrders,
+                        currentNewCustomers,
+                        currentRefundedReturns
+                ))
                 .bestSellingProductsByQuantity(buildTopProductsByQuantity(currentCompletedOrders))
-                .bestSellingProductsByRevenue(buildTopProductsByRevenue(currentCompletedOrders))
+                .bestSellingProductsByRevenue(buildTopProductsByRevenue(currentOrdersInRange, currentReturnRequests))
+                .productInventoryReport(buildProductInventoryReport(currentOrdersInRange))
                 .topCustomersBySpending(buildTopCustomersBySpending(currentCompletedOrders))
                 .build();
     }
@@ -252,30 +307,34 @@ public class ReportServiceImpl implements ReportService {
             return "DAILY";
         }
 
-        String value = groupBy.trim().toUpperCase();
-        if (!value.equals("DAILY") && !value.equals("MONTHLY")) {
-            return "DAILY";
+        String normalized = groupBy.trim().toUpperCase();
+        return "MONTHLY".equals(normalized) ? "MONTHLY" : "DAILY";
+    }
+
+    private boolean isWithinRange(LocalDate date, LocalDate fromDate, LocalDate toDate) {
+        if (date == null) {
+            return false;
         }
-        return value;
+        return !date.isBefore(fromDate) && !date.isAfter(toDate);
     }
 
     private LocalDate getSafeOrderDate(Order order) {
         if (order == null || order.getOrderDate() == null) {
-            return LocalDate.now();
+            return null;
         }
         return order.getOrderDate().toLocalDate();
     }
 
     private LocalDate getSafeUserCreatedDate(UserAccount user) {
         if (user == null || user.getCreatedAt() == null) {
-            return LocalDate.now();
+            return null;
         }
         return user.getCreatedAt().toLocalDate();
     }
 
-    private LocalDate getSafeRefundDate(ReturnRequest request) {
+    private LocalDate getSafeReturnTrackingDate(ReturnRequest request) {
         if (request == null) {
-            return LocalDate.now();
+            return null;
         }
 
         if (request.getResolvedAt() != null) {
@@ -286,68 +345,83 @@ public class ReportServiceImpl implements ReportService {
             return request.getRequestedAt().toLocalDate();
         }
 
-        return LocalDate.now();
+        return null;
     }
 
-    private boolean isWithinRange(LocalDate value, LocalDate fromDate, LocalDate toDate) {
-        return (value.isEqual(fromDate) || value.isAfter(fromDate))
-                && (value.isEqual(toDate) || value.isBefore(toDate));
+    private LocalDate getSafeRefundDate(ReturnRequest request) {
+        if (request == null) {
+            return null;
+        }
+
+        if (request.getResolvedAt() != null) {
+            return request.getResolvedAt().toLocalDate();
+        }
+
+        if (request.getRequestedAt() != null) {
+            return request.getRequestedAt().toLocalDate();
+        }
+
+        return null;
     }
 
     private boolean isCompletedOrder(Order order) {
-        String status = normalizeStatus(order != null ? order.getStatus() : null);
+        if (order == null || order.getStatus() == null) {
+            return false;
+        }
+        String status = order.getStatus().trim().toUpperCase();
         return "DELIVERED".equals(status) || "COMPLETED".equals(status);
     }
 
-    private boolean isPendingOrder(Order order) {
-        return "PENDING".equals(normalizeStatus(order != null ? order.getStatus() : null));
-    }
-
-    private boolean isProcessingOrder(Order order) {
-        return "PROCESSING".equals(normalizeStatus(order != null ? order.getStatus() : null));
-    }
-
-    private boolean isShippingOrder(Order order) {
-        String status = normalizeStatus(order != null ? order.getStatus() : null);
-        return "SHIPPING".equals(status) || "SHIPPED".equals(status) || "DELIVERING".equals(status);
-    }
-
-    private boolean isCancelledOrder(Order order) {
-        String status = normalizeStatus(order != null ? order.getStatus() : null);
-        return "CANCELED".equals(status) || "CANCELLED".equals(status);
-    }
-
     private boolean isProjectedOrder(Order order) {
-        if (order == null) return false;
-
-        String status = normalizeStatus(order.getStatus());
-        if (isCompletedOrder(order) || isCancelledOrder(order)) {
+        if (order == null || order.getStatus() == null) {
             return false;
         }
-
+        String status = order.getStatus().trim().toUpperCase();
         return "PENDING".equals(status)
                 || "PROCESSING".equals(status)
-                || "SHIPPING".equals(status)
                 || "SHIPPED".equals(status)
                 || "DELIVERING".equals(status)
                 || "PREORDER".equals(status);
     }
 
+    private boolean isPendingOrder(Order order) {
+        return order != null && "PENDING".equalsIgnoreCase(order.getStatus());
+    }
+
+    private boolean isProcessingOrder(Order order) {
+        return order != null && "PROCESSING".equalsIgnoreCase(order.getStatus());
+    }
+
+    private boolean isShippingOrder(Order order) {
+        if (order == null || order.getStatus() == null) {
+            return false;
+        }
+        String status = order.getStatus().trim().toUpperCase();
+        return "SHIPPED".equals(status) || "DELIVERING".equals(status) || "SHIPPING".equals(status);
+    }
+
+    private boolean isCancelledOrder(Order order) {
+        if (order == null || order.getStatus() == null) {
+            return false;
+        }
+        String status = order.getStatus().trim().toUpperCase();
+        return "CANCELED".equals(status) || "CANCELLED".equals(status);
+    }
+
+    private boolean isRefundPending(ReturnRequest request) {
+        return request != null && request.getStatus() == ReturnRequest.ReturnStatus.REFUND_PENDING;
+    }
+
+    private boolean isPendingReturnRequest(ReturnRequest request) {
+        return request != null && request.getStatus() == ReturnRequest.ReturnStatus.PENDING;
+    }
+
     private boolean isActuallyRefunded(ReturnRequest request) {
-        if (request == null || request.getStatus() == null) return false;
+        if (request == null || request.getStatus() == null) {
+            return false;
+        }
         return request.getStatus() == ReturnRequest.ReturnStatus.REFUNDED
                 || request.getStatus() == ReturnRequest.ReturnStatus.COMPLETED;
-    }
-
-    private String normalizeStatus(String status) {
-        return status == null ? "" : status.trim().toUpperCase();
-    }
-
-    private BigDecimal getOrderAmount(Order order) {
-        if (order == null) return BigDecimal.ZERO;
-        if (order.getFinalPrice() != null) return order.getFinalPrice();
-        if (order.getTotalPrice() != null) return order.getTotalPrice();
-        return BigDecimal.ZERO;
     }
 
     private BigDecimal sumOrderRevenue(List<Order> orders) {
@@ -363,6 +437,28 @@ public class ReportServiceImpl implements ReportService {
                 .sum();
     }
 
+    private BigDecimal getOrderAmount(Order order) {
+        if (order == null) {
+            return BigDecimal.ZERO;
+        }
+
+        if (order.getFinalPrice() != null) {
+            return order.getFinalPrice();
+        }
+
+        if (order.getTotalPrice() != null) {
+            return order.getTotalPrice();
+        }
+
+        return BigDecimal.ZERO;
+    }
+
+    private BigDecimal sumRefundAmount(List<ReturnRequest> requests) {
+        return requests.stream()
+                .map(this::calculateRefundAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
     private BigDecimal calculateRefundAmount(ReturnRequest request) {
         if (request == null || request.getOrderItem() == null) {
             return BigDecimal.ZERO;
@@ -376,56 +472,91 @@ public class ReportServiceImpl implements ReportService {
         return unitPrice.add(lensPrice).multiply(BigDecimal.valueOf(quantity));
     }
 
-    private BigDecimal sumRefundAmount(List<ReturnRequest> requests) {
-        return requests.stream()
-                .map(this::calculateRefundAmount)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-    }
-
     private BigDecimal safeAmount(BigDecimal value) {
         return value != null ? value : BigDecimal.ZERO;
     }
 
-    private Double calculateChangePercent(BigDecimal current, BigDecimal previous) {
-        double currentValue = current != null ? current.doubleValue() : 0D;
-        double previousValue = previous != null ? previous.doubleValue() : 0D;
-
-        if (previousValue == 0D) {
-            if (currentValue == 0D) return 0D;
-            return 100D;
-        }
-
-        return ((currentValue - previousValue) / previousValue) * 100D;
+    private long safeLong(Long value) {
+        return value != null ? value : 0L;
     }
 
-    private List<OrderStatusReportResponse> buildOrderStatusReport(List<Order> orders) {
-        long pending = orders.stream().filter(this::isPendingOrder).count();
-        long processing = orders.stream().filter(this::isProcessingOrder).count();
-        long shipping = orders.stream().filter(this::isShippingOrder).count();
-        long completed = orders.stream().filter(this::isCompletedOrder).count();
-        long cancelled = orders.stream().filter(this::isCancelledOrder).count();
+    private double percentage(long numerator, long denominator) {
+        if (denominator <= 0) {
+            return 0D;
+        }
+        return BigDecimal.valueOf(numerator)
+                .multiply(BigDecimal.valueOf(100))
+                .divide(BigDecimal.valueOf(denominator), 2, RoundingMode.HALF_UP)
+                .doubleValue();
+    }
 
-        return List.of(
-                OrderStatusReportResponse.builder().status("Pending").count(pending).build(),
-                OrderStatusReportResponse.builder().status("Processing").count(processing).build(),
-                OrderStatusReportResponse.builder().status("Shipping").count(shipping).build(),
-                OrderStatusReportResponse.builder().status("Completed").count(completed).build(),
-                OrderStatusReportResponse.builder().status("Cancelled").count(cancelled).build()
-        );
+    private Double calculateChangePercent(BigDecimal current, BigDecimal previous) {
+        BigDecimal safeCurrent = current != null ? current : BigDecimal.ZERO;
+        BigDecimal safePrevious = previous != null ? previous : BigDecimal.ZERO;
+
+        if (safePrevious.compareTo(BigDecimal.ZERO) == 0) {
+            return safeCurrent.compareTo(BigDecimal.ZERO) > 0 ? 100D : 0D;
+        }
+
+        return safeCurrent.subtract(safePrevious)
+                .multiply(BigDecimal.valueOf(100))
+                .divide(safePrevious, 2, RoundingMode.HALF_UP)
+                .doubleValue();
+    }
+
+    private List<OrderStatusReportResponse> buildOrderStatusReport(
+            long pendingOrders,
+            long processingOrders,
+            long shippingOrders,
+            long completedOrders,
+            long cancelledOrders
+    ) {
+        List<OrderStatusReportResponse> responses = new ArrayList<>();
+        responses.add(OrderStatusReportResponse.builder().status("Pending").count(pendingOrders).build());
+        responses.add(OrderStatusReportResponse.builder().status("Processing").count(processingOrders).build());
+        responses.add(OrderStatusReportResponse.builder().status("Shipping").count(shippingOrders).build());
+        responses.add(OrderStatusReportResponse.builder().status("Completed").count(completedOrders).build());
+        responses.add(OrderStatusReportResponse.builder().status("Cancelled").count(cancelledOrders).build());
+        return responses;
+    }
+
+    private List<ReturnStatusReportResponse> buildReturnStatusReport(List<ReturnRequest> returnRequests) {
+        Map<ReturnRequest.ReturnStatus, Long> countMap = new EnumMap<>(ReturnRequest.ReturnStatus.class);
+
+        for (ReturnRequest request : returnRequests) {
+            ReturnRequest.ReturnStatus status = request.getStatus();
+            if (status == null) {
+                continue;
+            }
+            countMap.put(status, countMap.getOrDefault(status, 0L) + 1);
+        }
+
+        List<ReturnStatusReportResponse> responses = new ArrayList<>();
+        for (ReturnRequest.ReturnStatus status : ReturnRequest.ReturnStatus.values()) {
+            responses.add(ReturnStatusReportResponse.builder()
+                    .status(status.name())
+                    .count(countMap.getOrDefault(status, 0L))
+                    .build());
+        }
+
+        return responses;
     }
 
     private List<DashboardTimePointResponse> buildTimeline(
-            List<Order> completedOrders,
-            List<UserAccount> newCustomers,
-            List<ReturnRequest> refundedRequests,
             LocalDate fromDate,
             LocalDate toDate,
-            String groupBy
+            String groupBy,
+            List<Order> completedOrders,
+            List<UserAccount> newCustomers,
+            List<ReturnRequest> refundedRequests
     ) {
         LinkedHashMap<String, TimePointAccumulator> buckets = initializeBuckets(fromDate, toDate, groupBy);
 
         for (Order order : completedOrders) {
-            String key = buildBucketKey(getSafeOrderDate(order), groupBy);
+            LocalDate orderDate = getSafeOrderDate(order);
+            if (orderDate == null) continue;
+
+            String key = buildBucketKey(orderDate, groupBy);
             TimePointAccumulator bucket = buckets.get(key);
             if (bucket == null) continue;
 
@@ -439,7 +570,10 @@ public class ReportServiceImpl implements ReportService {
         }
 
         for (UserAccount customer : newCustomers) {
-            String key = buildBucketKey(getSafeUserCreatedDate(customer), groupBy);
+            LocalDate customerDate = getSafeUserCreatedDate(customer);
+            if (customerDate == null) continue;
+
+            String key = buildBucketKey(customerDate, groupBy);
             TimePointAccumulator bucket = buckets.get(key);
             if (bucket == null) continue;
 
@@ -447,7 +581,10 @@ public class ReportServiceImpl implements ReportService {
         }
 
         for (ReturnRequest request : refundedRequests) {
-            String key = buildBucketKey(getSafeRefundDate(request), groupBy);
+            LocalDate refundDate = getSafeRefundDate(request);
+            if (refundDate == null) continue;
+
+            String key = buildBucketKey(refundDate, groupBy);
             TimePointAccumulator bucket = buckets.get(key);
             if (bucket == null) continue;
 
@@ -501,7 +638,7 @@ public class ReportServiceImpl implements ReportService {
     }
 
     private List<ProductReportResponse> buildTopProductsByQuantity(List<Order> completedOrders) {
-        Map<String, ProductAccumulator> map = buildProductMap(completedOrders);
+        Map<String, ProductAccumulator> map = buildProductMap(completedOrders, Collections.emptyList());
 
         return map.values().stream()
                 .sorted(Comparator.comparing(ProductAccumulator::getQuantitySold).reversed())
@@ -510,12 +647,15 @@ public class ReportServiceImpl implements ReportService {
                         .productName(item.productName)
                         .quantitySold(item.quantitySold)
                         .revenue(item.revenue)
+                .completedRevenue(item.completedRevenue)
+                .pendingRevenue(item.pendingRevenue)
+                .refundedRevenue(item.refundedRevenue)
                         .build())
                 .toList();
     }
 
-    private List<ProductReportResponse> buildTopProductsByRevenue(List<Order> completedOrders) {
-        Map<String, ProductAccumulator> map = buildProductMap(completedOrders);
+    private List<ProductReportResponse> buildTopProductsByRevenue(List<Order> ordersInRange, List<ReturnRequest> returnRequests) {
+        Map<String, ProductAccumulator> map = buildProductMap(ordersInRange, returnRequests);
 
         return map.values().stream()
                 .sorted(Comparator.comparing(ProductAccumulator::getRevenue).reversed())
@@ -524,6 +664,9 @@ public class ReportServiceImpl implements ReportService {
                         .productName(item.productName)
                         .quantitySold(item.quantitySold)
                         .revenue(item.revenue)
+                .completedRevenue(item.completedRevenue)
+                .pendingRevenue(item.pendingRevenue)
+                .refundedRevenue(item.refundedRevenue)
                         .build())
                 .toList();
     }
@@ -560,11 +703,95 @@ public class ReportServiceImpl implements ReportService {
                 .toList();
     }
 
+    private List<ProductInventoryReportResponse> buildProductInventoryReport(List<Order> ordersInRange) {
+        Map<String, ProductInventoryAccumulator> inventoryMap = new LinkedHashMap<>();
+
+        for (ProductVariant variant : productVariantRepository.findByDeletedFalse()) {
+            if (variant == null || variant.getProduct() == null || variant.getProduct().getProductId() == null) {
+                continue;
+            }
+
+            Long productId = variant.getProduct().getProductId();
+            ProductInventoryAccumulator accumulator = inventoryMap.computeIfAbsent(
+                    productId.toString(),
+                    ignored -> new ProductInventoryAccumulator(variant.getProduct().getName())
+            );
+
+            if (accumulator.productName == null || accumulator.productName.isBlank()) {
+                accumulator.productName = variant.getProduct().getName();
+            }
+
+            if (accumulator.color == null || accumulator.color.isBlank()) {
+                accumulator.color = variant.getColor();
+            }
+
+            accumulator.inStockQuantity += variant.getStockQuantity() != null ? variant.getStockQuantity() : 0L;
+        }
+
+        for (Order order : ordersInRange) {
+            for (OrderItem item : getSafeOrderItems(order)) {
+                String key = buildInventoryKey(item);
+                ProductInventoryAccumulator accumulator = inventoryMap.computeIfAbsent(
+                        key,
+                        ignored -> new ProductInventoryAccumulator(resolveInventoryProductName(item))
+                );
+
+                if (accumulator.productName == null || accumulator.productName.isBlank()) {
+                    accumulator.productName = resolveInventoryProductName(item);
+                }
+
+                long quantity = item != null && item.getQuantity() != null ? item.getQuantity() : 0L;
+
+                if (isCompletedOrder(order)) {
+                    accumulator.purchasedQuantity += quantity;
+                }
+
+                if (Boolean.TRUE.equals(item != null ? item.getIsPreorder() : null)) {
+                    accumulator.preorderQuantity += quantity;
+                }
+            }
+        }
+
+        return inventoryMap.values().stream()
+                .sorted(Comparator.comparing(ProductInventoryAccumulator::getPurchasedQuantity).reversed()
+                        .thenComparing(ProductInventoryAccumulator::getProductName, Comparator.nullsLast(String::compareToIgnoreCase)))
+                .map(item -> ProductInventoryReportResponse.builder()
+                        .productName(item.productName)
+                        .color(item.color)
+                        .purchasedQuantity(item.purchasedQuantity)
+                        .inStockQuantity(item.inStockQuantity)
+                        .preorderQuantity(item.preorderQuantity)
+                        .build())
+                .toList();
+    }
+
+    private String buildInventoryKey(OrderItem item) {
+        if (item != null && item.getProductId() != null) {
+            return "P-" + item.getProductId();
+        }
+
+        return "N-" + normalizeInventoryName(resolveInventoryProductName(item));
+    }
+
+    private String resolveInventoryProductName(OrderItem item) {
+        if (item == null || item.getProductName() == null || item.getProductName().isBlank()) {
+            return "Unknown Product";
+        }
+        return item.getProductName().trim();
+    }
+
+    private String normalizeInventoryName(String productName) {
+        if (productName == null || productName.isBlank()) {
+            return "UNKNOWN";
+        }
+        return productName.trim().toUpperCase();
+    }
+
     private String resolveCustomerName(Order order, UserAccount user) {
         if (user != null && user.getName() != null && !user.getName().isBlank()) {
             return user.getName().trim();
         }
-        if (order.getFullName() != null && !order.getFullName().isBlank()) {
+        if (order != null && order.getFullName() != null && !order.getFullName().isBlank()) {
             return order.getFullName().trim();
         }
         return "Guest";
@@ -577,10 +804,10 @@ public class ReportServiceImpl implements ReportService {
         return fullName.trim().toUpperCase();
     }
 
-    private Map<String, ProductAccumulator> buildProductMap(List<Order> completedOrders) {
+    private Map<String, ProductAccumulator> buildProductMap(List<Order> ordersInRange, List<ReturnRequest> returnRequests) {
         Map<String, ProductAccumulator> map = new HashMap<>();
 
-        for (Order order : completedOrders) {
+        for (Order order : ordersInRange) {
             for (OrderItem item : getSafeOrderItems(order)) {
                 String productName = item.getProductName();
                 if (productName == null || productName.isBlank()) {
@@ -590,16 +817,49 @@ public class ReportServiceImpl implements ReportService {
                 ProductAccumulator accumulator = map.computeIfAbsent(productName, ProductAccumulator::new);
 
                 long quantity = item.getQuantity() != null ? item.getQuantity() : 0;
-                BigDecimal unitPrice = item.getUnitPrice() != null ? item.getUnitPrice() : BigDecimal.ZERO;
-                BigDecimal lensPrice = item.getLensPrice() != null ? item.getLensPrice() : BigDecimal.ZERO;
-                BigDecimal revenue = unitPrice.add(lensPrice).multiply(BigDecimal.valueOf(quantity));
+                BigDecimal revenue = calculateItemRevenue(item, quantity);
 
                 accumulator.quantitySold += quantity;
                 accumulator.revenue = accumulator.revenue.add(revenue);
+
+                if (isCompletedOrder(order)) {
+                    accumulator.completedRevenue = accumulator.completedRevenue.add(revenue);
+                } else if (isProjectedOrder(order)) {
+                    accumulator.pendingRevenue = accumulator.pendingRevenue.add(revenue);
+                }
             }
         }
 
+        for (ReturnRequest request : returnRequests) {
+            if (request == null || request.getOrderItem() == null) {
+                continue;
+            }
+
+                if (request.getStatus() != ReturnRequest.ReturnStatus.REFUND_PENDING
+                    && request.getStatus() != ReturnRequest.ReturnStatus.REFUNDED
+                    && request.getStatus() != ReturnRequest.ReturnStatus.COMPLETED) {
+                continue;
+            }
+
+            OrderItem item = request.getOrderItem();
+            String productName = item.getProductName();
+            if (productName == null || productName.isBlank()) {
+                productName = "Unknown Product";
+            }
+
+            ProductAccumulator accumulator = map.computeIfAbsent(productName, ProductAccumulator::new);
+            BigDecimal refundedRevenue = calculateRefundAmount(request);
+            accumulator.refundedRevenue = accumulator.refundedRevenue.add(refundedRevenue);
+            accumulator.revenue = accumulator.revenue.add(refundedRevenue);
+        }
+
         return map;
+    }
+
+    private BigDecimal calculateItemRevenue(OrderItem item, long quantity) {
+        BigDecimal unitPrice = item != null && item.getUnitPrice() != null ? item.getUnitPrice() : BigDecimal.ZERO;
+        BigDecimal lensPrice = item != null && item.getLensPrice() != null ? item.getLensPrice() : BigDecimal.ZERO;
+        return unitPrice.add(lensPrice).multiply(BigDecimal.valueOf(quantity));
     }
 
     private List<OrderItem> getSafeOrderItems(Order order) {
@@ -625,6 +885,9 @@ public class ReportServiceImpl implements ReportService {
         private final String productName;
         private long quantitySold = 0L;
         private BigDecimal revenue = BigDecimal.ZERO;
+        private BigDecimal completedRevenue = BigDecimal.ZERO;
+        private BigDecimal pendingRevenue = BigDecimal.ZERO;
+        private BigDecimal refundedRevenue = BigDecimal.ZERO;
 
         private ProductAccumulator(String productName) {
             this.productName = productName;
@@ -636,6 +899,26 @@ public class ReportServiceImpl implements ReportService {
 
         public BigDecimal getRevenue() {
             return revenue;
+        }
+    }
+
+    private static class ProductInventoryAccumulator {
+        private String productName;
+        private String color;
+        private long purchasedQuantity = 0L;
+        private long inStockQuantity = 0L;
+        private long preorderQuantity = 0L;
+
+        private ProductInventoryAccumulator(String productName) {
+            this.productName = productName;
+        }
+
+        public long getPurchasedQuantity() {
+            return purchasedQuantity;
+        }
+
+        public String getProductName() {
+            return productName;
         }
     }
 

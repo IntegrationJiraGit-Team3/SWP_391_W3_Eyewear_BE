@@ -52,11 +52,13 @@ public class Order {
     @Column(columnDefinition = "nvarchar(255)")
     private String fullName;
     private String phone;
+
     @Column(columnDefinition = "nvarchar(255)")
     private String address;
+
     @Column(columnDefinition = "nvarchar(255)")
     private String note;
-    
+
     private BigDecimal shippingFee;
     private BigDecimal voucherDiscount;
     private BigDecimal finalPrice;
@@ -65,9 +67,31 @@ public class Order {
     private String depositType; // FULL or PARTIAL
     private String depositPaymentMethod; // Method used for the initial deposit
     private LocalDateTime stockReadyAt; // Timestamp when stock became available (preorders)
+    private String remainingPaymentStatus; // UNPAID, PAID, COD, NOT_REQUIRED
 
     @Column(unique = true)
     private String idempotencyKey;
+
+    @Column(name = "refund_status")
+    private String refundStatus;
+
+    @Column(name = "refund_requested_at")
+    private LocalDateTime refundRequestedAt;
+
+    @Column(name = "refund_processed_at")
+    private LocalDateTime refundProcessedAt;
+
+    @Column(name = "refund_bank_account_number", columnDefinition = "NVARCHAR(50)")
+    private String refundBankAccountNumber;
+
+    @Column(name = "refund_bank_name", columnDefinition = "NVARCHAR(100)")
+    private String refundBankName;
+
+    @Column(name = "refund_bank_account_holder", columnDefinition = "NVARCHAR(100)")
+    private String refundBankAccountHolder;
+
+    @Column(name = "refund_note", columnDefinition = "NVARCHAR(MAX)")
+    private String refundNote;
 
     @OneToMany(mappedBy = "order", cascade = CascadeType.ALL)
     private List<OrderItem> orderItems;
@@ -81,5 +105,4 @@ public class Order {
                     .toUpperCase();
         }
     }
-
 }

@@ -4,6 +4,9 @@ import com.fpt.glasseshop.entity.UserAccount;
 import com.fpt.glasseshop.entity.dto.ApiResponse;
 import com.fpt.glasseshop.entity.dto.CreateOrderRequest;
 import com.fpt.glasseshop.entity.dto.OrderDTO;
+import com.fpt.glasseshop.entity.dto.OrderRefundRequestDTO;
+import com.fpt.glasseshop.entity.dto.RefundProcessDTO;
+import com.fpt.glasseshop.entity.dto.VNPayRefundResult;
 import com.fpt.glasseshop.exception.ResourceNotFoundException;
 import com.fpt.glasseshop.repository.UserAccountRepository;
 import com.fpt.glasseshop.service.OrderService;
@@ -148,6 +151,118 @@ public class OrderRestController {
         }
     }
 
+    @PostMapping("/{id}/refund-vnpay")
+    public ResponseEntity<ApiResponse<VNPayRefundResult>> refundVnpay(
+            @PathVariable Long id,
+            @RequestParam(required = false) String reason
+    ) {
+        try {
+            UserAccount currentUser = getCurrentUser();
+
+            boolean isStaffOrAdmin = "ADMIN".equals(currentUser.getRole())
+                    || "OPERATIONAL_STAFF".equals(currentUser.getRole());
+
+            if (!isStaffOrAdmin) {
+                throw new AccessDeniedException("You are not authorized to process VNPay refunds");
+            }
+
+            VNPayRefundResult result = orderService.refundVnpayForCancelledOrder(id, currentUser.getEmail(), reason);
+            return ResponseEntity.ok(ApiResponse.success("VNPay refund processed", result));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(ApiResponse.error(e.getMessage()));
+        } catch (AccessDeniedException e) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(ApiResponse.error(e.getMessage()));
+        } catch (ResourceNotFoundException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(ApiResponse.error(e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(ApiResponse.error("Refund failed: " + e.getMessage()));
+        }
+    }
+
+    @PatchMapping("/{id}/request-refund")
+    public ResponseEntity<ApiResponse<OrderDTO>> requestRefund(
+            @PathVariable Long id,
+            @RequestBody OrderRefundRequestDTO dto
+    ) {
+        try {
+            UserAccount currentUser = getCurrentUser();
+            OrderDTO updatedOrder = orderService.requestRefundForCancelledOrder(id, currentUser.getEmail(), dto);
+            return ResponseEntity.ok(ApiResponse.success("Refund request submitted", updatedOrder));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(ApiResponse.error(e.getMessage()));
+        } catch (AccessDeniedException e) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(ApiResponse.error(e.getMessage()));
+        } catch (ResourceNotFoundException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(ApiResponse.error(e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(ApiResponse.error("Refund request failed: " + e.getMessage()));
+        }
+    }
+
+    @PatchMapping("/{id}/request-vnpay-refund")
+    public ResponseEntity<ApiResponse<OrderDTO>> requestVnpayRefund(
+            @PathVariable Long id,
+            @RequestBody(required = false) RefundProcessDTO dto
+    ) {
+        try {
+            UserAccount currentUser = getCurrentUser();
+            String reason = dto != null ? dto.getNote() : null;
+            OrderDTO updatedOrder = orderService.requestVnpayRefundForCancelledOrder(id, currentUser.getEmail(), reason);
+            return ResponseEntity.ok(ApiResponse.success("Refund request submitted", updatedOrder));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(ApiResponse.error(e.getMessage()));
+        } catch (AccessDeniedException e) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(ApiResponse.error(e.getMessage()));
+        } catch (ResourceNotFoundException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(ApiResponse.error(e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(ApiResponse.error("Refund request failed: " + e.getMessage()));
+        }
+    }
+
+    @PatchMapping("/{id}/confirm-refunded")
+    public ResponseEntity<ApiResponse<OrderDTO>> confirmRefunded(
+            @PathVariable Long id,
+            @RequestBody(required = false) RefundProcessDTO dto
+    ) {
+        try {
+            UserAccount currentUser = getCurrentUser();
+            boolean isStaffOrAdmin = "ADMIN".equals(currentUser.getRole())
+                    || "OPERATIONAL_STAFF".equals(currentUser.getRole());
+
+            if (!isStaffOrAdmin) {
+                throw new AccessDeniedException("You are not authorized to confirm refunds");
+            }
+
+            OrderDTO updatedOrder = orderService.confirmRefundedForCancelledOrder(id, currentUser.getEmail(), dto);
+            return ResponseEntity.ok(ApiResponse.success("Refund confirmed", updatedOrder));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(ApiResponse.error(e.getMessage()));
+        } catch (AccessDeniedException e) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(ApiResponse.error(e.getMessage()));
+        } catch (ResourceNotFoundException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(ApiResponse.error(e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(ApiResponse.error("Confirm refund failed: " + e.getMessage()));
+        }
+    }
+
     @DeleteMapping("/{id}")
     public ResponseEntity<ApiResponse<Void>> deleteOrder(@PathVariable Long id) {
         try {
@@ -181,4 +296,37 @@ public class OrderRestController {
         List<OrderDTO> orders = orderService.getOrdersDTOByUserId(currentUser.getUserId());
         return ResponseEntity.ok(ApiResponse.success(orders));
     }
+
+
+
+@PostMapping("/{id}/approve-preorder")
+public ResponseEntity<ApiResponse<OrderDTO>> approvePreorder(@PathVariable Long id) {
+    try {
+        OrderDTO orderDTO = orderService.approvePreorder(id);
+        return ResponseEntity.ok(ApiResponse.success("Preorder approved successfully", orderDTO));
+    } catch (IllegalArgumentException | IllegalStateException e) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(ApiResponse.error(e.getMessage()));
+    } catch (ResourceNotFoundException e) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiResponse.error(e.getMessage()));
+    } catch (Exception e) {
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(ApiResponse.error("Failed to approve preorder: " + e.getMessage()));
+    }
+}
+
+@PostMapping("/{id}/pay-remaining")
+public ResponseEntity<ApiResponse<OrderDTO>> payRemainingBalance(@PathVariable Long id) {
+    try {
+        OrderDTO orderDTO = orderService.payRemainingBalance(id);
+        return ResponseEntity.ok(ApiResponse.success("Remaining balance paid successfully", orderDTO));
+    } catch (IllegalArgumentException | IllegalStateException e) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(ApiResponse.error(e.getMessage()));
+    } catch (ResourceNotFoundException e) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiResponse.error(e.getMessage()));
+    } catch (Exception e) {
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(ApiResponse.error("Failed to pay remaining balance: " + e.getMessage()));
+    }
+}
+
 }

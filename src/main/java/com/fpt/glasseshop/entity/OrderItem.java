@@ -77,7 +77,6 @@ public class OrderItem {
     private BigDecimal addLeft;
     private BigDecimal addRight;
 
-
     @OneToOne(mappedBy = "orderItem", cascade = CascadeType.ALL)
     private Prescription prescription;
 
@@ -87,6 +86,9 @@ public class OrderItem {
     @Column(name = "is_preorder")
     private Boolean isPreorder;
 
+    @Column(name = "stock_deducted")
+    private Boolean stockDeducted = false;
+
     public String getItemType() {
         if (prescription != null || sphLeft != null || sphRight != null ||
                 cylLeft != null || cylRight != null || axisLeft != null || axisRight != null)
@@ -95,5 +97,6 @@ public class OrderItem {
             return "PRE_ORDER";
         return "IN_STOCK";
     }
-    private String groupId;//ràng buộc combo
+
+    private String groupId; // ràng buộc combo
 }

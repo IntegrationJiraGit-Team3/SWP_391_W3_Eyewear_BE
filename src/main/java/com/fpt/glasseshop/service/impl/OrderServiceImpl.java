@@ -5,7 +5,9 @@ import com.fpt.glasseshop.entity.dto.*;
 import com.fpt.glasseshop.exception.ResourceNotFoundException;
 import com.fpt.glasseshop.repository.CartRepository;
 import com.fpt.glasseshop.repository.OrderRepository;
+import com.fpt.glasseshop.repository.PaymentRepository;
 import com.fpt.glasseshop.repository.ProductVariantRepository;
+import com.fpt.glasseshop.service.VNPayRefundService;
 import com.fpt.glasseshop.service.NotificationService;
 import com.fpt.glasseshop.service.OrderItemService;
 import com.fpt.glasseshop.service.OrderService;
@@ -28,6 +30,8 @@ public class OrderServiceImpl implements OrderService {
     private final CartRepository cartRepository;
     private final ProductVariantRepository productVariantRepository;
     private final NotificationService notificationService;
+    private final PaymentRepository paymentRepository;
+    private final VNPayRefundService vnPayRefundService;
 
     @Override
     public Order saveOrder(Order order) {
@@ -69,11 +73,13 @@ public class OrderServiceImpl implements OrderService {
             if ("PARTIAL".equals(order.getDepositType())
                     && "PROCESSING".equals(order.getStatus())
                     && order.getStockReadyAt() != null
-                    && order.getStockReadyAt().plusHours(12).isBefore(LocalDateTime.now())
-                    && "UNPAID".equals(order.getPaymentStatus())
-                    && !"COD".equals(order.getPaymentMethod())) {
+                    && order.getStockReadyAt().plusHours(24).isBefore(LocalDateTime.now())
+                    && "UNPAID".equalsIgnoreCase(order.getRemainingPaymentStatus())) {
 
-                order.setPaymentMethod("COD");
+                order.setRemainingPaymentStatus("COD");
+                if ("UNPAID".equalsIgnoreCase(order.getPaymentStatus())) {
+                    order.setPaymentStatus("PARTIAL_COD");
+                }
                 orderRepository.save(order);
             }
         }
@@ -109,7 +115,8 @@ public class OrderServiceImpl implements OrderService {
         }
 
         if (("PENDING".equals(order.getStatus()) || "PREORDER".equals(order.getStatus()))
-                && "PROCESSING".equals(targetStatus)) {
+                && "PROCESSING".equals(targetStatus)
+                && order.getStockReadyAt() == null) {
             order.setStockReadyAt(LocalDateTime.now());
         }
 
@@ -135,8 +142,27 @@ public class OrderServiceImpl implements OrderService {
 
         if ("CANCELED".equals(targetStatus) || "CANCELLED".equals(targetStatus)) {
             restoreStock(order);
+
+            // If it was unpaid, cancel the payment too
             if ("UNPAID".equalsIgnoreCase(order.getPaymentStatus())) {
                 order.setPaymentStatus("CANCELLED");
+            }
+
+            // Trigger refund process if money was paid via VNPay
+            boolean isVnPay = "VNPAY".equalsIgnoreCase(order.getPaymentMethod()) || "VNPAY".equalsIgnoreCase(order.getDepositPaymentMethod());
+            boolean isPaidFull = "PAID".equalsIgnoreCase(order.getPaymentStatus()) || "PAID_FULL".equalsIgnoreCase(order.getPaymentStatus());
+            
+            // Treat partial deposits that are PAID as needing refund
+            boolean isPartialPaid = "PARTIAL".equalsIgnoreCase(order.getDepositType()) && 
+                                  "PAID".equalsIgnoreCase(order.getPaymentStatus());
+
+            if (isVnPay && (isPaidFull || isPartialPaid)) {
+                if (order.getRefundStatus() == null || order.getRefundStatus().isBlank()) {
+                    order.setRefundStatus("WAITING_REFUND");
+                }
+                if (order.getRefundRequestedAt() == null) {
+                    order.setRefundRequestedAt(LocalDateTime.now());
+                }
             }
         }
 
@@ -148,6 +174,338 @@ public class OrderServiceImpl implements OrderService {
                 order.getOrderId()
         );
 
+        return convertToDTO(orderRepository.save(order));
+    }
+
+    @Override
+    @Transactional
+    public VNPayRefundResult refundVnpayForCancelledOrder(Long orderId, String requesterEmail, String reason) {
+        if (orderId == null) {
+            throw new IllegalArgumentException("orderId is required");
+        }
+
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new ResourceNotFoundException("Order not found with id: " + orderId));
+
+        if (requesterEmail == null || requesterEmail.isBlank()
+                || order.getUser() == null
+                || order.getUser().getEmail() == null
+                || !order.getUser().getEmail().equalsIgnoreCase(requesterEmail)) {
+            throw new org.springframework.security.access.AccessDeniedException("You are not authorized to refund this order");
+        }
+
+        String paymentMethod = order.getPaymentMethod() != null ? order.getPaymentMethod().trim() : "";
+        if (!"VNPAY".equalsIgnoreCase(paymentMethod)) {
+            throw new IllegalArgumentException("Order is not paid via VNPay");
+        }
+
+        String paymentStatus = order.getPaymentStatus() != null ? order.getPaymentStatus().trim() : "";
+        if (!"PAID".equalsIgnoreCase(paymentStatus) && !"PAID_FULL".equalsIgnoreCase(paymentStatus)) {
+            throw new IllegalArgumentException("Order is not in a paid state");
+        }
+
+        String status = order.getStatus() != null ? order.getStatus().trim().toUpperCase() : "";
+        boolean cancellableStatus = Arrays.asList(
+                "PENDING",
+                "PREORDER",
+                "PROCESSING",
+                "CANCELED",
+                "CANCELLED"
+        ).contains(status);
+
+        if (!cancellableStatus) {
+            throw new IllegalArgumentException("Order cannot be refunded at current status: " + status);
+        }
+
+        if (paymentRepository.existsByOrderOrderIdAndPaymentMethodIgnoreCaseAndAmountLessThan(
+                orderId,
+                "VNPAY",
+                BigDecimal.ZERO
+        )) {
+            return VNPayRefundResult.builder()
+                    .success(true)
+                .refundStatus("REFUNDED")
+                    .message("Order already has a VNPay refund recorded")
+                    .transactionReference(null)
+                    .build();
+        }
+
+        if ("PENDING".equals(status) || "PREORDER".equals(status) || "PROCESSING".equals(status)) {
+            updateOrderStatus(orderId, "CANCELLED");
+            order = orderRepository.findById(orderId)
+                    .orElseThrow(() -> new ResourceNotFoundException("Order not found with id: " + orderId));
+        }
+
+        Payment paidPayment = paymentRepository
+                .findTopByOrderOrderIdAndPaymentMethodIgnoreCaseAndAmountGreaterThanAndStatusOrderByPaidAtDesc(
+                        orderId,
+                        "VNPAY",
+                        BigDecimal.ZERO,
+                        "SUCCESS"
+                );
+
+        if (paidPayment == null || paidPayment.getTransactionReference() == null || paidPayment.getTransactionReference().isBlank()) {
+            order.setRefundStatus("WAITING_REFUND");
+            order.setRefundNote(reason);
+            orderRepository.save(order);
+
+            return VNPayRefundResult.builder()
+                    .success(false)
+                    .refundStatus("WAITING_REFUND")
+                    .message("Missing VNPay transaction reference; cannot process auto-refund")
+                    .build();
+        }
+
+        order.setRefundStatus("PENDING");
+        if (order.getRefundRequestedAt() == null) {
+            order.setRefundRequestedAt(LocalDateTime.now());
+        }
+        if (reason != null && !reason.isBlank()) {
+            order.setRefundNote(reason);
+        }
+        orderRepository.save(order);
+
+        VNPayRefundResult refundResult = vnPayRefundService.refund(order, paidPayment, requesterEmail, reason);
+
+        if (refundResult.isSuccess()) {
+            Payment refundPayment = Payment.builder()
+                    .order(order)
+                    .paymentMethod("VNPAY")
+                    .amount(paidPayment.getAmount() != null ? paidPayment.getAmount().negate() : BigDecimal.ZERO)
+                    .status("REFUNDED")
+                    .transactionReference(paidPayment.getTransactionReference())
+                    .paidAt(LocalDateTime.now())
+                    .build();
+
+            paymentRepository.save(refundPayment);
+
+            order.setRefundStatus("REFUNDED");
+            order.setRefundProcessedAt(LocalDateTime.now());
+            order.setStatus("REFUNDED");
+            orderRepository.save(order);
+        } else {
+            order.setRefundStatus("WAITING_REFUND");
+            orderRepository.save(order);
+        }
+
+        refundResult.setRefundStatus(order.getRefundStatus());
+
+        return refundResult;
+    }
+
+    @Override
+    @Transactional
+    public OrderDTO requestRefundForCancelledOrder(Long orderId, String requesterEmail, OrderRefundRequestDTO dto) {
+        if (orderId == null) {
+            throw new IllegalArgumentException("orderId is required");
+        }
+
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new ResourceNotFoundException("Order not found with id: " + orderId));
+
+        if (requesterEmail == null || requesterEmail.isBlank()
+                || order.getUser() == null
+                || order.getUser().getEmail() == null
+                || !order.getUser().getEmail().equalsIgnoreCase(requesterEmail)) {
+            throw new org.springframework.security.access.AccessDeniedException("You are not authorized to request a refund for this order");
+        }
+
+        String paymentMethod = order.getPaymentMethod() != null ? order.getPaymentMethod().trim() : "";
+        if (!"VNPAY".equalsIgnoreCase(paymentMethod)) {
+            throw new IllegalArgumentException("Order is not paid via VNPay");
+        }
+
+        String paymentStatus = order.getPaymentStatus() != null ? order.getPaymentStatus().trim() : "";
+        if (!"PAID".equalsIgnoreCase(paymentStatus) && !"PAID_FULL".equalsIgnoreCase(paymentStatus)) {
+            throw new IllegalArgumentException("Order is not in a paid state");
+        }
+
+        String status = order.getStatus() != null ? order.getStatus().trim().toUpperCase() : "";
+        if (!Arrays.asList("CANCELED", "CANCELLED", "REFUND", "REFUNDED").contains(status)) {
+            // Keep behavior simple: only allow refund requests after cancellation.
+            throw new IllegalArgumentException("Order must be cancelled before requesting a refund");
+        }
+
+        if (dto == null) {
+            throw new IllegalArgumentException("Refund request payload is required");
+        }
+
+        if (dto.getBankName() == null || dto.getBankName().isBlank()) {
+            throw new IllegalArgumentException("Bank name is required");
+        }
+
+        if (dto.getBankAccountNumber() == null || dto.getBankAccountNumber().isBlank()) {
+            throw new IllegalArgumentException("Bank account number is required");
+        }
+
+        if (dto.getBankAccountHolder() == null || dto.getBankAccountHolder().isBlank()) {
+            throw new IllegalArgumentException("Bank account holder is required");
+        }
+
+        order.setRefundStatus("PENDING");
+        if (order.getRefundRequestedAt() == null) {
+            order.setRefundRequestedAt(LocalDateTime.now());
+        }
+
+        order.setRefundBankName(dto.getBankName());
+        order.setRefundBankAccountNumber(dto.getBankAccountNumber());
+        order.setRefundBankAccountHolder(dto.getBankAccountHolder());
+        if (dto.getNote() != null && !dto.getNote().isBlank()) {
+            order.setRefundNote(dto.getNote());
+        }
+
+        return convertToDTO(orderRepository.save(order));
+    }
+
+    @Override
+    @Transactional
+    public OrderDTO requestVnpayRefundForCancelledOrder(Long orderId, String requesterEmail, String reason) {
+        if (orderId == null) {
+            throw new IllegalArgumentException("orderId is required");
+        }
+
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new ResourceNotFoundException("Order not found with id: " + orderId));
+
+        if (requesterEmail == null || requesterEmail.isBlank()
+                || order.getUser() == null
+                || order.getUser().getEmail() == null
+                || !order.getUser().getEmail().equalsIgnoreCase(requesterEmail)) {
+            throw new org.springframework.security.access.AccessDeniedException("You are not authorized to request a refund for this order");
+        }
+
+        String paymentMethod = order.getPaymentMethod() != null ? order.getPaymentMethod().trim() : "";
+        if (!"VNPAY".equalsIgnoreCase(paymentMethod)) {
+            throw new IllegalArgumentException("Order is not paid via VNPay");
+        }
+
+        String paymentStatus = order.getPaymentStatus() != null ? order.getPaymentStatus().trim() : "";
+        if (!"PAID".equalsIgnoreCase(paymentStatus) && !"PAID_FULL".equalsIgnoreCase(paymentStatus)) {
+            throw new IllegalArgumentException("Order is not in a paid state");
+        }
+
+        String status = order.getStatus() != null ? order.getStatus().trim().toUpperCase() : "";
+        boolean cancellableStatus = Arrays.asList(
+                "PENDING",
+                "PREORDER",
+                "PROCESSING",
+                "CANCELED",
+                "CANCELLED"
+        ).contains(status);
+
+        if (!cancellableStatus) {
+            throw new IllegalArgumentException("Order cannot be refunded at current status: " + status);
+        }
+
+        if ("PENDING".equals(status) || "PREORDER".equals(status) || "PROCESSING".equals(status)) {
+            updateOrderStatus(orderId, "CANCELLED");
+            order = orderRepository.findById(orderId)
+                    .orElseThrow(() -> new ResourceNotFoundException("Order not found with id: " + orderId));
+        }
+
+        order.setRefundStatus("PENDING");
+        if (order.getRefundRequestedAt() == null) {
+            order.setRefundRequestedAt(LocalDateTime.now());
+        }
+        if (reason != null && !reason.isBlank()) {
+            order.setRefundNote(reason);
+        }
+
+        return convertToDTO(orderRepository.save(order));
+    }
+
+    @Override
+    @Transactional
+    public OrderDTO confirmRefundedForCancelledOrder(Long orderId, String confirmerEmail, RefundProcessDTO dto) {
+        if (orderId == null) {
+            throw new IllegalArgumentException("orderId is required");
+        }
+
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new ResourceNotFoundException("Order not found with id: " + orderId));
+
+        String refundStatus = order.getRefundStatus() != null ? order.getRefundStatus().trim().toUpperCase() : "";
+        if (!"PENDING".equals(refundStatus)) {
+            throw new IllegalArgumentException("Refund can only be confirmed when status is PENDING");
+        }
+
+        String note = dto != null ? dto.getNote() : null;
+        if (note != null && !note.isBlank()) {
+            order.setRefundNote(note);
+        }
+
+        boolean hasManualBankInfo = order.getRefundBankAccountNumber() != null
+                && !order.getRefundBankAccountNumber().isBlank();
+
+        // Auto VNPay refund path: no bank info -> perform VNPay refund on admin confirmation.
+        if (!hasManualBankInfo && order.getPaymentMethod() != null
+                && "VNPAY".equalsIgnoreCase(order.getPaymentMethod().trim())) {
+
+            if (paymentRepository.existsByOrderOrderIdAndPaymentMethodIgnoreCaseAndAmountLessThan(
+                    orderId,
+                    "VNPAY",
+                    BigDecimal.ZERO
+            )) {
+                order.setRefundStatus("REFUNDED");
+                order.setRefundProcessedAt(LocalDateTime.now());
+                order.setStatus("REFUNDED");
+                return convertToDTO(orderRepository.save(order));
+            }
+
+            Payment paidPayment = paymentRepository
+                    .findTopByOrderOrderIdAndPaymentMethodIgnoreCaseAndAmountGreaterThanAndStatusOrderByPaidAtDesc(
+                            orderId,
+                            "VNPAY",
+                            BigDecimal.ZERO,
+                            "SUCCESS"
+                    );
+
+            if (paidPayment == null || paidPayment.getTransactionReference() == null || paidPayment.getTransactionReference().isBlank()) {
+                throw new IllegalArgumentException("Missing VNPay transaction reference; cannot process auto-refund");
+            }
+
+            VNPayRefundResult refundResult = vnPayRefundService.refund(order, paidPayment, confirmerEmail, note);
+
+            if (!refundResult.isSuccess()) {
+                String code = refundResult.getResponseCode();
+                String reqId = refundResult.getRequestId();
+                String msg = refundResult.getMessage() != null ? refundResult.getMessage() : "unknown error";
+                String raw = refundResult.getRawResponse();
+                String rawSnippet = null;
+                if (raw != null && !raw.isBlank()) {
+                    String trimmed = raw.trim().replaceAll("\\s+", " ");
+                    rawSnippet = trimmed.length() > 300 ? trimmed.substring(0, 300) + "..." : trimmed;
+                }
+                throw new IllegalStateException(
+                        "VNPay refund failed" +
+                                (code != null ? " (code=" + code + ")" : "") +
+                                (reqId != null ? " (requestId=" + reqId + ")" : "") +
+                                ": " + msg +
+                                (rawSnippet != null ? " | raw=" + rawSnippet : "")
+                );
+            }
+
+            Payment refundPayment = Payment.builder()
+                    .order(order)
+                    .paymentMethod("VNPAY")
+                    .amount(paidPayment.getAmount() != null ? paidPayment.getAmount().negate() : BigDecimal.ZERO)
+                    .status("REFUNDED")
+                    .transactionReference(paidPayment.getTransactionReference())
+                    .paidAt(LocalDateTime.now())
+                    .build();
+
+            paymentRepository.save(refundPayment);
+
+            order.setRefundStatus("REFUNDED");
+            order.setRefundProcessedAt(LocalDateTime.now());
+            order.setStatus("REFUNDED");
+            return convertToDTO(orderRepository.save(order));
+        }
+
+        // Manual refund path: admin confirms they've sent the refund manually.
+        order.setRefundStatus("REFUNDED");
+        order.setRefundProcessedAt(LocalDateTime.now());
+        order.setStatus("REFUNDED");
         return convertToDTO(orderRepository.save(order));
     }
 
@@ -172,7 +530,12 @@ public class OrderServiceImpl implements OrderService {
 
         if (("PAID".equals(targetStatus) || "PAID_FULL".equals(targetStatus))
                 && ("PENDING".equals(order.getStatus()) || "PREORDER".equals(order.getStatus()))) {
-            order.setStatus("PROCESSING");
+            String paymentMethod = order.getPaymentMethod() != null ? order.getPaymentMethod().trim() : "";
+            // Business rule: VNPay orders should remain PENDING/PREORDER after successful payment
+            // so that the customer can still cancel before fulfillment.
+            if (!"VNPAY".equalsIgnoreCase(paymentMethod)) {
+                order.setStatus("PROCESSING");
+            }
         }
 
         if ("FAILED".equals(targetStatus) && ("PENDING".equals(order.getStatus()) || "PREORDER".equals(order.getStatus()))) {
@@ -287,6 +650,9 @@ public class OrderServiceImpl implements OrderService {
                 .paymentStatus("UNPAID")
                 .depositType(request.getDepositType())
                 .depositPaymentMethod(request.getPaymentMethod())
+                .remainingPaymentStatus(Boolean.TRUE.equals(request.getIsPreorder()) && "PARTIAL".equalsIgnoreCase(request.getDepositType())
+                        ? "UNPAID"
+                        : "NOT_REQUIRED")
                 .orderDate(LocalDateTime.now())
                 .orderItems(new ArrayList<>())
                 .build();
@@ -335,6 +701,7 @@ public class OrderServiceImpl implements OrderService {
                         .quantity(1)
                         .unitPrice(unitPrice)
                         .isPreorder(isPreorderItem)
+                        .stockDeducted(!isPreorderItem)
                         .fulfillmentType(cartItem.getPrescription() != null || cartItem.getIsLens() == Boolean.TRUE
                                 ? "PRESCRIPTION"
                                 : (isPreorderItem ? "PRE_ORDER" : "IN_STOCK"))
@@ -405,24 +772,106 @@ public class OrderServiceImpl implements OrderService {
         return convertToDTO(savedOrder);
     }
 
-    @Override
-    public List<OrderItem> getOrderItems(Long orderId) {
-        return orderItemService.getOrderItemsByOrderId(orderId);
+
+@Override
+@Transactional
+public OrderDTO approvePreorder(Long orderId) {
+    Order order = orderRepository.findById(orderId)
+            .orElseThrow(() -> new ResourceNotFoundException("Order not found with id: " + orderId));
+
+    String currentStatus = order.getStatus() != null ? order.getStatus().trim().toUpperCase() : "";
+    if (!"PREORDER".equals(currentStatus) && !"PENDING".equals(currentStatus)) {
+        throw new IllegalStateException("Only PENDING/PREORDER orders can be approved");
     }
 
-    private void restoreStock(Order order) {
-        if (order.getOrderItems() == null) return;
+    if (order.getOrderItems() == null || order.getOrderItems().isEmpty()) {
+        throw new IllegalStateException("Order has no items");
+    }
 
-        for (OrderItem item : order.getOrderItems()) {
-            if (Boolean.TRUE.equals(item.getIsPreorder())) continue;
-
-            if (item.getVariantId() != null && item.getQuantity() != null) {
-                productVariantRepository.decreaseStock(item.getVariantId(), -item.getQuantity());
-            }
+    for (OrderItem item : order.getOrderItems()) {
+        if (!Boolean.TRUE.equals(item.getIsPreorder())) {
+            continue;
         }
+
+        if (Boolean.TRUE.equals(item.getStockDeducted())) {
+            continue;
+        }
+
+        if (item.getVariantId() == null || item.getQuantity() == null) {
+            throw new IllegalStateException("Preorder item is missing variant or quantity");
+        }
+
+        int updatedRows = productVariantRepository.decreaseStock(item.getVariantId(), item.getQuantity());
+        if (updatedRows == 0) {
+            throw new IllegalStateException("Insufficient stock for preorder item: " + item.getProductName());
+        }
+
+        item.setStockDeducted(true);
     }
 
-    private OrderDTO convertToDTO(Order order) {
+    order.setStatus("PROCESSING");
+    if (order.getStockReadyAt() == null) {
+        order.setStockReadyAt(LocalDateTime.now());
+    }
+
+    notificationService.createNotification(
+            order.getUser(),
+            "Preorder Approved",
+            "Your preorder " + order.getOrderCode() + " is now being processed.",
+            "ORDER",
+            order.getOrderId()
+    );
+
+    return convertToDTO(orderRepository.save(order));
+}
+
+@Override
+@Transactional
+public OrderDTO payRemainingBalance(Long orderId) {
+    Order order = orderRepository.findById(orderId)
+            .orElseThrow(() -> new ResourceNotFoundException("Order not found with id: " + orderId));
+
+    if (!"PARTIAL".equalsIgnoreCase(order.getDepositType())) {
+        throw new IllegalArgumentException("This order is not using partial payment");
+    }
+
+    if (!"UNPAID".equalsIgnoreCase(order.getRemainingPaymentStatus())
+            && !"COD".equalsIgnoreCase(order.getRemainingPaymentStatus())) {
+        throw new IllegalStateException("Remaining balance is already settled");
+    }
+
+    order.setRemainingPaymentStatus("PAID");
+    order.setPaymentStatus("PAID_FULL");
+
+    return convertToDTO(orderRepository.save(order));
+}
+
+@Override
+public List<OrderItem> getOrderItems(Long orderId) {
+    return orderItemService.getOrderItemsByOrderId(orderId);
+}
+
+
+private void restoreStock(Order order) {
+    if (order.getOrderItems() == null) return;
+
+    for (OrderItem item : order.getOrderItems()) {
+        boolean shouldRestore = !Boolean.TRUE.equals(item.getIsPreorder())
+                || Boolean.TRUE.equals(item.getStockDeducted());
+
+        if (!shouldRestore) {
+            continue;
+        }
+
+        if (item.getVariantId() != null && item.getQuantity() != null) {
+            productVariantRepository.decreaseStock(item.getVariantId(), -item.getQuantity());
+        }
+
+        item.setStockDeducted(false);
+    }
+}
+
+private OrderDTO convertToDTO(Order order) {
         return OrderDTO.builder()
                 .orderId(order.getOrderId())
                 .orderCode(order.getOrderCode())
@@ -445,6 +894,14 @@ public class OrderServiceImpl implements OrderService {
                 .depositType(order.getDepositType())
                 .depositPaymentMethod(order.getDepositPaymentMethod())
                 .stockReadyAt(order.getStockReadyAt())
+                .remainingPaymentStatus(order.getRemainingPaymentStatus())
+                .refundStatus(order.getRefundStatus())
+                .refundRequestedAt(order.getRefundRequestedAt())
+                .refundProcessedAt(order.getRefundProcessedAt())
+                .refundBankAccountNumber(order.getRefundBankAccountNumber())
+                .refundBankName(order.getRefundBankName())
+                .refundBankAccountHolder(order.getRefundBankAccountHolder())
+                .refundNote(order.getRefundNote())
                 .orderItems(order.getOrderItems() != null
                         ? order.getOrderItems().stream().map(this::mapToItemDTO).collect(Collectors.toList())
                         : null)
@@ -470,6 +927,7 @@ public class OrderServiceImpl implements OrderService {
                 .quantity(item.getQuantity())
                 .unitPrice(item.getUnitPrice())
                 .isPreorder(item.getIsPreorder())
+                .stockDeducted(item.getStockDeducted())
                 .fulfillmentType(item.getFulfillmentType())
                 .sphLeft(item.getSphLeft())
                 .sphRight(item.getSphRight())

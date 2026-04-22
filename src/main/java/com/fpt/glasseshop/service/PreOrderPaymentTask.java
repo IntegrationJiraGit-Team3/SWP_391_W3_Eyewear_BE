@@ -21,19 +21,18 @@ public class PreOrderPaymentTask {
     @Scheduled(fixedRate = 60_000)
     @Transactional
     public void handleExpiredPreorderPayments() {
-        List<Order> orders = orderRepository.findByStatus("PROCESSING");
         LocalDateTime now = LocalDateTime.now();
+        List<Order> orders = orderRepository.findOrdersWithExpiredRemainingPayment(now);
 
         for (Order order : orders) {
             if (!"PARTIAL".equalsIgnoreCase(order.getDepositType())) continue;
             if (!"UNPAID".equalsIgnoreCase(order.getRemainingPaymentStatus())) continue;
-            if (order.getStockReadyAt() == null) continue;
 
-            if (order.getStockReadyAt().plusHours(24).isBefore(now)) {
-                order.setRemainingPaymentStatus("COD");
-                orderRepository.save(order);
-                log.info("Preorder {} switched remaining payment to COD", order.getOrderCode());
-            }
+            order.setRemainingPaymentStatus("COD");
+            order.setRemainingPaymentDueAt(null);
+            orderRepository.save(order);
+
+            log.info("Preorder {} switched remaining payment to COD", order.getOrderCode());
         }
     }
 }

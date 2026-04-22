@@ -70,16 +70,13 @@ public class OrderServiceImpl implements OrderService {
         if (orderOpt.isPresent()) {
             Order order = orderOpt.get();
 
-            if ("PARTIAL".equals(order.getDepositType())
-                    && "PROCESSING".equals(order.getStatus())
-                    && order.getStockReadyAt() != null
-                    && order.getStockReadyAt().plusHours(24).isBefore(LocalDateTime.now())
-                    && "UNPAID".equalsIgnoreCase(order.getRemainingPaymentStatus())) {
+            if ("PARTIAL".equalsIgnoreCase(order.getDepositType())
+                    && "UNPAID".equalsIgnoreCase(order.getRemainingPaymentStatus())
+                    && order.getRemainingPaymentDueAt() != null
+                    && !order.getRemainingPaymentDueAt().isAfter(LocalDateTime.now())) {
 
                 order.setRemainingPaymentStatus("COD");
-                if ("UNPAID".equalsIgnoreCase(order.getPaymentStatus())) {
-                    order.setPaymentStatus("PARTIAL_COD");
-                }
+                order.setRemainingPaymentDueAt(null);
                 orderRepository.save(order);
             }
         }
@@ -114,10 +111,12 @@ public class OrderServiceImpl implements OrderService {
             throw new IllegalArgumentException("Invalid order status: " + targetStatus);
         }
 
-        if (("PENDING".equals(order.getStatus()) || "PREORDER".equals(order.getStatus()))
-                && "PROCESSING".equals(targetStatus)
-                && order.getStockReadyAt() == null) {
-            order.setStockReadyAt(LocalDateTime.now());
+        if ("PROCESSING".equals(order.getStatus())
+                && ("SHIPPED".equals(targetStatus) || "DELIVERING".equals(targetStatus))) {
+            if ("PARTIAL".equalsIgnoreCase(order.getDepositType())
+                    && "UNPAID".equalsIgnoreCase(order.getRemainingPaymentStatus())) {
+                throw new IllegalStateException("Cannot ship preorder before the remaining balance is settled or switched to COD");
+            }
         }
 
         if ("PROCESSING".equals(order.getStatus())
@@ -525,9 +524,7 @@ public class OrderServiceImpl implements OrderService {
         if (("PAID".equals(targetStatus) || "PAID_FULL".equals(targetStatus))
                 && ("PENDING".equals(order.getStatus()) || "PREORDER".equals(order.getStatus()))) {
             String paymentMethod = order.getPaymentMethod() != null ? order.getPaymentMethod().trim() : "";
-            // Business rule: VNPay orders should remain PENDING/PREORDER after successful payment
-            // so that the customer can still cancel before fulfillment.
-            if (!"VNPAY".equalsIgnoreCase(paymentMethod)) {
+            if (!"VNPAY".equalsIgnoreCase(paymentMethod) && !hasPreorderItems(order)) {
                 order.setStatus("PROCESSING");
             }
         }
@@ -647,6 +644,7 @@ public class OrderServiceImpl implements OrderService {
                 .remainingPaymentStatus(Boolean.TRUE.equals(request.getIsPreorder()) && "PARTIAL".equalsIgnoreCase(request.getDepositType())
                         ? "UNPAID"
                         : "NOT_REQUIRED")
+                .remainingPaymentDueAt(null)
                 .orderDate(LocalDateTime.now())
                 .orderItems(new ArrayList<>())
                 .build();
@@ -767,6 +765,19 @@ public class OrderServiceImpl implements OrderService {
     }
 
 
+private boolean hasPreorderItems(Order order) {
+    return order.getOrderItems() != null
+            && order.getOrderItems().stream().anyMatch(item -> Boolean.TRUE.equals(item.getIsPreorder()));
+}
+
+private BigDecimal calculateRemainingAmount(Order order) {
+    BigDecimal finalPrice = order.getFinalPrice() != null ? order.getFinalPrice() : BigDecimal.ZERO;
+    BigDecimal deposit = order.getDepositAmount() != null ? order.getDepositAmount() : BigDecimal.ZERO;
+    BigDecimal remaining = finalPrice.subtract(deposit);
+    return remaining.compareTo(BigDecimal.ZERO) > 0 ? remaining : BigDecimal.ZERO;
+}
+
+
 @Override
 @Transactional
 public OrderDTO approvePreorder(Long orderId) {
@@ -782,10 +793,12 @@ public OrderDTO approvePreorder(Long orderId) {
         throw new IllegalStateException("Order has no items");
     }
 
+    boolean hasPreorderItem = false;
     for (OrderItem item : order.getOrderItems()) {
         if (!Boolean.TRUE.equals(item.getIsPreorder())) {
             continue;
         }
+        hasPreorderItem = true;
 
         if (Boolean.TRUE.equals(item.getStockDeducted())) {
             continue;
@@ -803,15 +816,29 @@ public OrderDTO approvePreorder(Long orderId) {
         item.setStockDeducted(true);
     }
 
+    if (!hasPreorderItem) {
+        throw new IllegalStateException("Order does not contain preorder items");
+    }
+
+    LocalDateTime now = LocalDateTime.now();
     order.setStatus("PROCESSING");
-    if (order.getStockReadyAt() == null) {
-        order.setStockReadyAt(LocalDateTime.now());
+    order.setStockReadyAt(now);
+
+    if ("PARTIAL".equalsIgnoreCase(order.getDepositType())
+            && "UNPAID".equalsIgnoreCase(order.getRemainingPaymentStatus())
+            && calculateRemainingAmount(order).compareTo(BigDecimal.ZERO) > 0) {
+        order.setRemainingPaymentDueAt(now.plusHours(24));
+    } else {
+        order.setRemainingPaymentDueAt(null);
+        if (order.getRemainingPaymentStatus() == null || order.getRemainingPaymentStatus().isBlank()) {
+            order.setRemainingPaymentStatus("NOT_REQUIRED");
+        }
     }
 
     notificationService.createNotification(
             order.getUser(),
             "Preorder Approved",
-            "Your preorder " + order.getOrderCode() + " is now being processed.",
+            "Your preorder " + order.getOrderCode() + " has enough stock and is now being processed.",
             "ORDER",
             order.getOrderId()
     );
@@ -834,7 +861,14 @@ public OrderDTO payRemainingBalance(Long orderId) {
         throw new IllegalStateException("Remaining balance is already settled");
     }
 
+    if (calculateRemainingAmount(order).compareTo(BigDecimal.ZERO) <= 0) {
+        order.setRemainingPaymentStatus("NOT_REQUIRED");
+        order.setRemainingPaymentDueAt(null);
+        return convertToDTO(orderRepository.save(order));
+    }
+
     order.setRemainingPaymentStatus("PAID");
+    order.setRemainingPaymentDueAt(null);
     order.setPaymentStatus("PAID_FULL");
 
     return convertToDTO(orderRepository.save(order));

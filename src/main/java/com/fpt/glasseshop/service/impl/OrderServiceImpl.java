@@ -147,15 +147,9 @@ public class OrderServiceImpl implements OrderService {
                 order.setPaymentStatus("CANCELLED");
             }
 
-            // Trigger refund process if money was paid via VNPay
-            boolean isVnPay = "VNPAY".equalsIgnoreCase(order.getPaymentMethod()) || "VNPAY".equalsIgnoreCase(order.getDepositPaymentMethod());
-            boolean isPaidFull = "PAID".equalsIgnoreCase(order.getPaymentStatus()) || "PAID_FULL".equalsIgnoreCase(order.getPaymentStatus());
-            
-            // Treat partial deposits that are PAID as needing refund
-            boolean isPartialPaid = "PARTIAL".equalsIgnoreCase(order.getDepositType()) && 
-                                  "PAID".equalsIgnoreCase(order.getPaymentStatus());
-
-            if (isVnPay && (isPaidFull || isPartialPaid)) {
+            if ("VNPAY".equalsIgnoreCase(order.getPaymentMethod())
+                    && ("PAID".equalsIgnoreCase(order.getPaymentStatus())
+                    || "PAID_FULL".equalsIgnoreCase(order.getPaymentStatus()))) {
                 if (order.getRefundStatus() == null || order.getRefundStatus().isBlank()) {
                     order.setRefundStatus("WAITING_REFUND");
                 }
@@ -928,8 +922,6 @@ private OrderDTO convertToDTO(Order order) {
                 .depositType(order.getDepositType())
                 .depositPaymentMethod(order.getDepositPaymentMethod())
                 .stockReadyAt(order.getStockReadyAt())
-                .remainingPaymentDueAt(order.getRemainingPaymentDueAt())
-                .remainingPaymentStatus(order.getRemainingPaymentStatus())
                 .refundStatus(order.getRefundStatus())
                 .refundRequestedAt(order.getRefundRequestedAt())
                 .refundProcessedAt(order.getRefundProcessedAt())

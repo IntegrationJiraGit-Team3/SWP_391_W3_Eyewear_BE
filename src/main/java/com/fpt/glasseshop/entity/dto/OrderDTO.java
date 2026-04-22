@@ -62,6 +62,14 @@ public class OrderDTO {
     private String refundBankAccountHolder;
     private String refundNote;
 
+    private String refundStatus;
+    private LocalDateTime refundRequestedAt;
+    private LocalDateTime refundProcessedAt;
+    private String refundBankAccountNumber;
+    private String refundBankName;
+    private String refundBankAccountHolder;
+    private String refundNote;
+
     @Schema(description = "Payment status of the order", example = "PAID")
     private String paymentStatus;
 

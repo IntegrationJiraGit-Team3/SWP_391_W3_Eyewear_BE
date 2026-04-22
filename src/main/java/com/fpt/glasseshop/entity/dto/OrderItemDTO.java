@@ -65,9 +65,6 @@ public class OrderItemDTO {
     @Schema(description = "Whether it is a preorder", example = "false")
     private Boolean isPreorder;
 
-    @Schema(description = "Whether stock has been deducted for this preorder item (true after admin approves)", example = "false")
-    private Boolean stockDeducted;
-
     // Prescription Data (Flat parameters from OrderItem entity)
     @Schema(description = "Spherical (Left)", example = "-1.50")
     private BigDecimal sphLeft;

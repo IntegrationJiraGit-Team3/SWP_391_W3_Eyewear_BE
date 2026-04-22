@@ -9,6 +9,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 
+
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -26,6 +27,13 @@ public class AdminDashboardAnalyticsResponse {
     private BigDecimal refundedAmount;
     private BigDecimal remainingRevenueAfterRefund;
 
+    private BigDecimal totalFrameRevenue;
+    private BigDecimal totalLensRevenue;
+    private BigDecimal totalProductRevenue;
+
+    private BigDecimal codRevenue;
+    private BigDecimal vnpayRevenue;
+
     private Long totalCustomers;
     private Long newCustomers;
     private Long soldItems;
@@ -36,6 +44,9 @@ public class AdminDashboardAnalyticsResponse {
     private Long processingOrders;
     private Long shippingOrders;
     private Long cancelledOrders;
+
+    private Long refundedOrders;
+    private Long processedOrders;
 
     private Long totalReturnRequests;
     private Long pendingReturnRequests;
@@ -54,6 +65,18 @@ public class AdminDashboardAnalyticsResponse {
     private List<DashboardTimePointResponse> timeline;
     private List<ProductReportResponse> bestSellingProductsByQuantity;
     private List<ProductReportResponse> bestSellingProductsByRevenue;
+
+    private List<ProductReportResponse> bestSellingFramesByQuantity;
+    private List<ProductReportResponse> bestSellingFramesByRevenue;
+
+    private List<LensReportResponse> bestSellingLensesByQuantity;
+    private List<LensReportResponse> bestSellingLensesByRevenue;
+
+    private List<LensReportResponse> lensSalesReport;
     private List<ProductInventoryReportResponse> productInventoryReport;
     private List<CustomerPurchaseSummaryResponse> topCustomersBySpending;
+    private List<CustomerInsightResponse> customerInsights;
+
+    private List<OrderInsightResponse> topOrders;
+    private List<OrderInsightResponse> cancelledOrdersReport;
 }

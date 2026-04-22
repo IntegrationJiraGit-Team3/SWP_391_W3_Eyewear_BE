@@ -69,6 +69,27 @@ public class Order {
     @Column(unique = true)
     private String idempotencyKey;
 
+    @Column(name = "refund_status")
+    private String refundStatus;
+
+    @Column(name = "refund_requested_at")
+    private LocalDateTime refundRequestedAt;
+
+    @Column(name = "refund_processed_at")
+    private LocalDateTime refundProcessedAt;
+
+    @Column(name = "refund_bank_account_number", columnDefinition = "NVARCHAR(50)")
+    private String refundBankAccountNumber;
+
+    @Column(name = "refund_bank_name", columnDefinition = "NVARCHAR(100)")
+    private String refundBankName;
+
+    @Column(name = "refund_bank_account_holder", columnDefinition = "NVARCHAR(100)")
+    private String refundBankAccountHolder;
+
+    @Column(name = "refund_note", columnDefinition = "NVARCHAR(MAX)")
+    private String refundNote;
+
     @OneToMany(mappedBy = "order", cascade = CascadeType.ALL)
     private List<OrderItem> orderItems;
 

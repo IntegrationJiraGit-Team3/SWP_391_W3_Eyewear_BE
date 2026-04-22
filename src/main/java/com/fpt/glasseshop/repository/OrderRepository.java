@@ -131,15 +131,21 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
             @Param("to") LocalDateTime to
     );
 
-
-    @Query("""
-        SELECT o FROM Order o
-        WHERE o.depositType = 'PARTIAL'
-          AND o.remainingPaymentStatus = 'UNPAID'
-          AND o.remainingPaymentDueAt IS NOT NULL
-          AND o.remainingPaymentDueAt <= :cutoff
-          AND o.status NOT IN ('CANCELLED', 'CANCELED', 'DELIVERED', 'COMPLETED', 'REFUNDED')
-    """)
-    List<Order> findOrdersWithExpiredRemainingPayment(@Param("cutoff") LocalDateTime cutoff);
-
+                @Query("""
+                                SELECT COALESCE(SUM(o.finalPrice), 0)
+                                FROM Order o
+                                WHERE o.orderDate >= :from
+                                        AND o.orderDate <= :to
+                                        AND (
+                                                         o.status IN ('DELIVERED', 'COMPLETED')
+                                                         OR (
+                                                                                UPPER(o.paymentMethod) = 'VNPAY'
+                                                                                AND o.paymentStatus IN ('PAID', 'PAID_FULL')
+                                                         )
+                                        )
+                """)
+                BigDecimal calculateGrossRevenueIncludingVnpayPaidBetween(
+                                                @Param("from") LocalDateTime from,
+                                                @Param("to") LocalDateTime to
+                );
 }

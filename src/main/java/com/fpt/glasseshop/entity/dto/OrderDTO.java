@@ -43,7 +43,7 @@ public class OrderDTO {
     private String phone;
     private String address;
     private String note;
-    
+
     private BigDecimal shippingFee;
     private BigDecimal voucherDiscount;
     private BigDecimal finalPrice;
@@ -51,6 +51,15 @@ public class OrderDTO {
     private String depositType;
     private String depositPaymentMethod;
     private LocalDateTime stockReadyAt;
+    private String remainingPaymentStatus;
+
+    private String refundStatus;
+    private LocalDateTime refundRequestedAt;
+    private LocalDateTime refundProcessedAt;
+    private String refundBankAccountNumber;
+    private String refundBankName;
+    private String refundBankAccountHolder;
+    private String refundNote;
 
     private String refundStatus;
     private LocalDateTime refundRequestedAt;

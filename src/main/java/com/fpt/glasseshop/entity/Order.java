@@ -52,11 +52,13 @@ public class Order {
     @Column(columnDefinition = "nvarchar(255)")
     private String fullName;
     private String phone;
+
     @Column(columnDefinition = "nvarchar(255)")
     private String address;
+
     @Column(columnDefinition = "nvarchar(255)")
     private String note;
-    
+
     private BigDecimal shippingFee;
     private BigDecimal voucherDiscount;
     private BigDecimal finalPrice;
@@ -65,6 +67,7 @@ public class Order {
     private String depositType; // FULL or PARTIAL
     private String depositPaymentMethod; // Method used for the initial deposit
     private LocalDateTime stockReadyAt; // Timestamp when stock became available (preorders)
+    private String remainingPaymentStatus; // UNPAID, PAID, COD, NOT_REQUIRED
 
     @Column(unique = true)
     private String idempotencyKey;
@@ -102,5 +105,4 @@ public class Order {
                     .toUpperCase();
         }
     }
-
 }

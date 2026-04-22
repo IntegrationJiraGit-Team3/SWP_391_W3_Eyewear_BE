@@ -296,4 +296,37 @@ public class OrderRestController {
         List<OrderDTO> orders = orderService.getOrdersDTOByUserId(currentUser.getUserId());
         return ResponseEntity.ok(ApiResponse.success(orders));
     }
+
+
+
+@PostMapping("/{id}/approve-preorder")
+public ResponseEntity<ApiResponse<OrderDTO>> approvePreorder(@PathVariable Long id) {
+    try {
+        OrderDTO orderDTO = orderService.approvePreorder(id);
+        return ResponseEntity.ok(ApiResponse.success("Preorder approved successfully", orderDTO));
+    } catch (IllegalArgumentException | IllegalStateException e) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(ApiResponse.error(e.getMessage()));
+    } catch (ResourceNotFoundException e) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiResponse.error(e.getMessage()));
+    } catch (Exception e) {
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(ApiResponse.error("Failed to approve preorder: " + e.getMessage()));
+    }
+}
+
+@PostMapping("/{id}/pay-remaining")
+public ResponseEntity<ApiResponse<OrderDTO>> payRemainingBalance(@PathVariable Long id) {
+    try {
+        OrderDTO orderDTO = orderService.payRemainingBalance(id);
+        return ResponseEntity.ok(ApiResponse.success("Remaining balance paid successfully", orderDTO));
+    } catch (IllegalArgumentException | IllegalStateException e) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(ApiResponse.error(e.getMessage()));
+    } catch (ResourceNotFoundException e) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiResponse.error(e.getMessage()));
+    } catch (Exception e) {
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(ApiResponse.error("Failed to pay remaining balance: " + e.getMessage()));
+    }
+}
+
 }

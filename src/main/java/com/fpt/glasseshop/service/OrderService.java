@@ -41,6 +41,13 @@ public interface OrderService {
 
     OrderDTO confirmRefundedForCancelledOrder(Long orderId, String confirmerEmail, RefundProcessDTO dto);
 
+<<<<<<< HEAD
+=======
+    OrderDTO approvePreorder(Long orderId);
+
+    OrderDTO payRemainingBalance(Long orderId);
+
+>>>>>>> 11b4883fe842d92dc5039ae774e757cbb315cd32
     void deleteOrder(Long id);
 
     OrderDTO createOrderFromCart(UserAccount user, CreateOrderRequest request);

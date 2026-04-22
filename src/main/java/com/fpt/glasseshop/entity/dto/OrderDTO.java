@@ -51,6 +51,7 @@ public class OrderDTO {
     private String depositType;
     private String depositPaymentMethod;
     private LocalDateTime stockReadyAt;
+    private LocalDateTime remainingPaymentDueAt;
     private String remainingPaymentStatus;
 
     private String refundStatus;

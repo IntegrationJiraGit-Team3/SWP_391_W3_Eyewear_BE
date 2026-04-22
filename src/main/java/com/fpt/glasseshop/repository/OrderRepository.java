@@ -130,4 +130,16 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
             @Param("from") LocalDateTime from,
             @Param("to") LocalDateTime to
     );
+
+
+    @Query("""
+        SELECT o FROM Order o
+        WHERE o.depositType = 'PARTIAL'
+          AND o.remainingPaymentStatus = 'UNPAID'
+          AND o.remainingPaymentDueAt IS NOT NULL
+          AND o.remainingPaymentDueAt <= :cutoff
+          AND o.status NOT IN ('CANCELLED', 'CANCELED', 'DELIVERED', 'COMPLETED', 'REFUNDED')
+    """)
+    List<Order> findOrdersWithExpiredRemainingPayment(@Param("cutoff") LocalDateTime cutoff);
+
 }

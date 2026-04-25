@@ -33,17 +33,17 @@ public class ProductRestController {
                 List<ProductDTO> products = productService.getAllProducts();
 
                 return ResponseEntity.ok(
-                                ApiResponse.success("Products retrieved successfully", products));
+                        ApiResponse.success("Products retrieved successfully", products));
         }
 
         @GetMapping
         @Operation(summary = "Get all products", description = "Retrieves a list of all available products")
         public ResponseEntity<ApiResponse<List<ProductDTO>>> getAllProductsForUser() {
 
-            List<ProductDTO> products = productService.getAllProductsForUser();
+                List<ProductDTO> products = productService.getAllProductsForUser();
 
-            return ResponseEntity.ok(
-                    ApiResponse.success("Products retrieved successfully", products));
+                return ResponseEntity.ok(
+                        ApiResponse.success("Products retrieved successfully", products));
         }
         //================== UPDATE PRODUCT =================
         @PutMapping("/{id}")
@@ -65,36 +65,36 @@ public class ProductRestController {
         @GetMapping("/{id}")
         @Operation(summary = "Get product by ID", description = "Retrieves a single product by its unique identifier")
         public ResponseEntity<ApiResponse<ProductDTO>> getProductById(
-                        @Parameter(description = "ID of the product", example = "1") @PathVariable Long id) {
+                @Parameter(description = "ID of the product", example = "1") @PathVariable Long id) {
 
                 ProductDTO product = productService.getProductDTOById(id);
 
                 if (product != null) {
                         return ResponseEntity.ok(
-                                        ApiResponse.success("Product retrieved successfully", product));
+                                ApiResponse.success("Product retrieved successfully", product));
                 }
 
                 return ResponseEntity.status(404)
-                                .body(ApiResponse.error("Product not found"));
+                        .body(ApiResponse.error("Product not found"));
         }
 
         // ================= SEARCH PRODUCTS =================
         @GetMapping("/search")
         @Operation(summary = "Search products", description = "Search products by name or brand")
         public ResponseEntity<ApiResponse<List<ProductDTO>>> searchProducts(
-                        @Parameter(description = "Search query", example = "RayBan") @RequestParam String query) {
+                @Parameter(description = "Search query", example = "RayBan") @RequestParam String query) {
 
                 List<ProductDTO> results = productService.searchProducts(query);
 
                 return ResponseEntity.ok(
-                                ApiResponse.success("Search completed successfully", results));
+                        ApiResponse.success("Search completed successfully", results));
         }
 
         // ================= CREATE PRODUCT =================
         @PostMapping
         @Operation(summary = "Create a new product", description = "Adds a new product to the catalog")
         public ResponseEntity<ApiResponse<ProductDTO>> createProduct(
-                        @RequestBody ProductDTO productDTO) {
+                @RequestBody ProductDTO productDTO) {
 
                 log.info("Received request to create product: {}", productDTO);
 
@@ -103,28 +103,28 @@ public class ProductRestController {
                 log.info("Successfully created product with ID: {}", created.getProductId());
 
                 return ResponseEntity.status(201)
-                                .body(ApiResponse.success("Product created successfully", created));
+                        .body(ApiResponse.success("Product created successfully", created));
         }
 
         // ================= DELETE PRODUCT =================
         @DeleteMapping("/{id}")
         @Operation(summary = "Delete product", description = "Deletes a product from catalog by ID")
         public ResponseEntity<ApiResponse<Void>> deleteProduct(
-                        @Parameter(description = "Product ID", example = "1") @PathVariable Long id) {
+                @Parameter(description = "Product ID", example = "1") @PathVariable Long id) {
 
                 try {
 
                         productService.deleteProduct(id);
 
                         return ResponseEntity.ok(
-                                        ApiResponse.success("Product deleted successfully", null));
+                                ApiResponse.success("Product deleted successfully", null));
 
                 } catch (RuntimeException e) {
 
                         log.error("Error deleting product: {}", e.getMessage());
 
                         return ResponseEntity.status(404)
-                                        .body(ApiResponse.error(e.getMessage()));
+                                .body(ApiResponse.error(e.getMessage()));
                 }
         }
 }

@@ -70,13 +70,14 @@ public class OrderServiceImpl implements OrderService {
         if (orderOpt.isPresent()) {
             Order order = orderOpt.get();
 
-            if ("PARTIAL".equalsIgnoreCase(order.getDepositType())
-                    && "UNPAID".equalsIgnoreCase(order.getRemainingPaymentStatus())
-                    && order.getRemainingPaymentDueAt() != null
-                    && !order.getRemainingPaymentDueAt().isAfter(LocalDateTime.now())) {
+            if ("PARTIAL".equals(order.getDepositType())
+                    && "PROCESSING".equals(order.getStatus())
+                    && order.getStockReadyAt() != null
+                    && order.getStockReadyAt().plusHours(12).isBefore(LocalDateTime.now())
+                    && "UNPAID".equals(order.getPaymentStatus())
+                    && !"COD".equals(order.getPaymentMethod())) {
 
-                order.setRemainingPaymentStatus("COD");
-                order.setRemainingPaymentDueAt(null);
+                order.setPaymentMethod("COD");
                 orderRepository.save(order);
             }
         }
@@ -111,12 +112,9 @@ public class OrderServiceImpl implements OrderService {
             throw new IllegalArgumentException("Invalid order status: " + targetStatus);
         }
 
-        if ("PROCESSING".equals(order.getStatus())
-                && ("SHIPPED".equals(targetStatus) || "DELIVERING".equals(targetStatus))) {
-            if ("PARTIAL".equalsIgnoreCase(order.getDepositType())
-                    && "UNPAID".equalsIgnoreCase(order.getRemainingPaymentStatus())) {
-                throw new IllegalStateException("Cannot ship preorder before the remaining balance is settled or switched to COD");
-            }
+        if (("PENDING".equals(order.getStatus()) || "PREORDER".equals(order.getStatus()))
+                && "PROCESSING".equals(targetStatus)) {
+            order.setStockReadyAt(LocalDateTime.now());
         }
 
         if ("PROCESSING".equals(order.getStatus())
@@ -141,8 +139,6 @@ public class OrderServiceImpl implements OrderService {
 
         if ("CANCELED".equals(targetStatus) || "CANCELLED".equals(targetStatus)) {
             restoreStock(order);
-
-            // If it was unpaid, cancel the payment too
             if ("UNPAID".equalsIgnoreCase(order.getPaymentStatus())) {
                 order.setPaymentStatus("CANCELLED");
             }
@@ -524,7 +520,9 @@ public class OrderServiceImpl implements OrderService {
         if (("PAID".equals(targetStatus) || "PAID_FULL".equals(targetStatus))
                 && ("PENDING".equals(order.getStatus()) || "PREORDER".equals(order.getStatus()))) {
             String paymentMethod = order.getPaymentMethod() != null ? order.getPaymentMethod().trim() : "";
-            if (!"VNPAY".equalsIgnoreCase(paymentMethod) && !hasPreorderItems(order)) {
+            // Business rule: VNPay orders should remain PENDING/PREORDER after successful payment
+            // so that the customer can still cancel before fulfillment.
+            if (!"VNPAY".equalsIgnoreCase(paymentMethod)) {
                 order.setStatus("PROCESSING");
             }
         }
@@ -641,10 +639,6 @@ public class OrderServiceImpl implements OrderService {
                 .paymentStatus("UNPAID")
                 .depositType(request.getDepositType())
                 .depositPaymentMethod(request.getPaymentMethod())
-                .remainingPaymentStatus(Boolean.TRUE.equals(request.getIsPreorder()) && "PARTIAL".equalsIgnoreCase(request.getDepositType())
-                        ? "UNPAID"
-                        : "NOT_REQUIRED")
-                .remainingPaymentDueAt(null)
                 .orderDate(LocalDateTime.now())
                 .orderItems(new ArrayList<>())
                 .build();
@@ -693,7 +687,6 @@ public class OrderServiceImpl implements OrderService {
                         .quantity(1)
                         .unitPrice(unitPrice)
                         .isPreorder(isPreorderItem)
-                        .stockDeducted(!isPreorderItem)
                         .fulfillmentType(cartItem.getPrescription() != null || cartItem.getIsLens() == Boolean.TRUE
                                 ? "PRESCRIPTION"
                                 : (isPreorderItem ? "PRE_ORDER" : "IN_STOCK"))
@@ -764,142 +757,24 @@ public class OrderServiceImpl implements OrderService {
         return convertToDTO(savedOrder);
     }
 
-
-private boolean hasPreorderItems(Order order) {
-    return order.getOrderItems() != null
-            && order.getOrderItems().stream().anyMatch(item -> Boolean.TRUE.equals(item.getIsPreorder()));
-}
-
-private BigDecimal calculateRemainingAmount(Order order) {
-    BigDecimal finalPrice = order.getFinalPrice() != null ? order.getFinalPrice() : BigDecimal.ZERO;
-    BigDecimal deposit = order.getDepositAmount() != null ? order.getDepositAmount() : BigDecimal.ZERO;
-    BigDecimal remaining = finalPrice.subtract(deposit);
-    return remaining.compareTo(BigDecimal.ZERO) > 0 ? remaining : BigDecimal.ZERO;
-}
-
-
-@Override
-@Transactional
-public OrderDTO approvePreorder(Long orderId) {
-    Order order = orderRepository.findById(orderId)
-            .orElseThrow(() -> new ResourceNotFoundException("Order not found with id: " + orderId));
-
-    String currentStatus = order.getStatus() != null ? order.getStatus().trim().toUpperCase() : "";
-    if (!"PREORDER".equals(currentStatus) && !"PENDING".equals(currentStatus)) {
-        throw new IllegalStateException("Only PENDING/PREORDER orders can be approved");
+    @Override
+    public List<OrderItem> getOrderItems(Long orderId) {
+        return orderItemService.getOrderItemsByOrderId(orderId);
     }
 
-    if (order.getOrderItems() == null || order.getOrderItems().isEmpty()) {
-        throw new IllegalStateException("Order has no items");
-    }
+    private void restoreStock(Order order) {
+        if (order.getOrderItems() == null) return;
 
-    boolean hasPreorderItem = false;
-    for (OrderItem item : order.getOrderItems()) {
-        if (!Boolean.TRUE.equals(item.getIsPreorder())) {
-            continue;
-        }
-        hasPreorderItem = true;
+        for (OrderItem item : order.getOrderItems()) {
+            if (Boolean.TRUE.equals(item.getIsPreorder())) continue;
 
-        if (Boolean.TRUE.equals(item.getStockDeducted())) {
-            continue;
-        }
-
-        if (item.getVariantId() == null || item.getQuantity() == null) {
-            throw new IllegalStateException("Preorder item is missing variant or quantity");
-        }
-
-        int updatedRows = productVariantRepository.decreaseStock(item.getVariantId(), item.getQuantity());
-        if (updatedRows == 0) {
-            throw new IllegalStateException("Insufficient stock for preorder item: " + item.getProductName());
-        }
-
-        item.setStockDeducted(true);
-    }
-
-    if (!hasPreorderItem) {
-        throw new IllegalStateException("Order does not contain preorder items");
-    }
-
-    LocalDateTime now = LocalDateTime.now();
-    order.setStatus("PROCESSING");
-    order.setStockReadyAt(now);
-
-    if ("PARTIAL".equalsIgnoreCase(order.getDepositType())
-            && "UNPAID".equalsIgnoreCase(order.getRemainingPaymentStatus())
-            && calculateRemainingAmount(order).compareTo(BigDecimal.ZERO) > 0) {
-        order.setRemainingPaymentDueAt(now.plusHours(24));
-    } else {
-        order.setRemainingPaymentDueAt(null);
-        if (order.getRemainingPaymentStatus() == null || order.getRemainingPaymentStatus().isBlank()) {
-            order.setRemainingPaymentStatus("NOT_REQUIRED");
+            if (item.getVariantId() != null && item.getQuantity() != null) {
+                productVariantRepository.decreaseStock(item.getVariantId(), -item.getQuantity());
+            }
         }
     }
 
-    notificationService.createNotification(
-            order.getUser(),
-            "Preorder Approved",
-            "Your preorder " + order.getOrderCode() + " has enough stock and is now being processed.",
-            "ORDER",
-            order.getOrderId()
-    );
-
-    return convertToDTO(orderRepository.save(order));
-}
-
-@Override
-@Transactional
-public OrderDTO payRemainingBalance(Long orderId) {
-    Order order = orderRepository.findById(orderId)
-            .orElseThrow(() -> new ResourceNotFoundException("Order not found with id: " + orderId));
-
-    if (!"PARTIAL".equalsIgnoreCase(order.getDepositType())) {
-        throw new IllegalArgumentException("This order is not using partial payment");
-    }
-
-    if (!"UNPAID".equalsIgnoreCase(order.getRemainingPaymentStatus())
-            && !"COD".equalsIgnoreCase(order.getRemainingPaymentStatus())) {
-        throw new IllegalStateException("Remaining balance is already settled");
-    }
-
-    if (calculateRemainingAmount(order).compareTo(BigDecimal.ZERO) <= 0) {
-        order.setRemainingPaymentStatus("NOT_REQUIRED");
-        order.setRemainingPaymentDueAt(null);
-        return convertToDTO(orderRepository.save(order));
-    }
-
-    order.setRemainingPaymentStatus("PAID");
-    order.setRemainingPaymentDueAt(null);
-    order.setPaymentStatus("PAID_FULL");
-
-    return convertToDTO(orderRepository.save(order));
-}
-
-@Override
-public List<OrderItem> getOrderItems(Long orderId) {
-    return orderItemService.getOrderItemsByOrderId(orderId);
-}
-
-
-private void restoreStock(Order order) {
-    if (order.getOrderItems() == null) return;
-
-    for (OrderItem item : order.getOrderItems()) {
-        boolean shouldRestore = !Boolean.TRUE.equals(item.getIsPreorder())
-                || Boolean.TRUE.equals(item.getStockDeducted());
-
-        if (!shouldRestore) {
-            continue;
-        }
-
-        if (item.getVariantId() != null && item.getQuantity() != null) {
-            productVariantRepository.decreaseStock(item.getVariantId(), -item.getQuantity());
-        }
-
-        item.setStockDeducted(false);
-    }
-}
-
-private OrderDTO convertToDTO(Order order) {
+    private OrderDTO convertToDTO(Order order) {
         return OrderDTO.builder()
                 .orderId(order.getOrderId())
                 .orderCode(order.getOrderCode())
@@ -954,7 +829,6 @@ private OrderDTO convertToDTO(Order order) {
                 .quantity(item.getQuantity())
                 .unitPrice(item.getUnitPrice())
                 .isPreorder(item.getIsPreorder())
-                .stockDeducted(item.getStockDeducted())
                 .fulfillmentType(item.getFulfillmentType())
                 .sphLeft(item.getSphLeft())
                 .sphRight(item.getSphRight())

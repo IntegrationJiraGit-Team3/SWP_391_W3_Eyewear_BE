@@ -38,7 +38,7 @@ public class ProductVariantController {
 
         return ResponseEntity.ok(ApiResponse.success("Product Variant updated successfully", variant));
     }
-//    @PutMapping("/variants/decrease/{variantId}")
+    //    @PutMapping("/variants/decrease/{variantId}")
 //    public ResponseEntity<ApiResponse<ProductVariant>> decreaseQuantityProductVariant(
 //            @PathVariable Long variantId,
 //            @RequestParam Integer amount,

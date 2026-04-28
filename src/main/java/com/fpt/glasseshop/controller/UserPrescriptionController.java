@@ -16,7 +16,7 @@ import java.util.List;
 public class UserPrescriptionController {
 
     private final UserPrescriptionService service;
-    private final UserAccountRepository userAccountRepository; // ✅ dùng cái này
+    private final UserAccountRepository userAccountRepository; // ✅ dùng
 
     private UserAccount getCurrentUser(Authentication auth) {
         String email = auth.getName(); // ✅ lấy email từ JWT

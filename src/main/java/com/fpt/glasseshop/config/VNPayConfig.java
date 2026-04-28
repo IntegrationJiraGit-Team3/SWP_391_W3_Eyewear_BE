@@ -15,6 +15,10 @@ public class VNPayConfig {
     @Value("${vnpay.payUrl}")
     private String vnp_PayUrl;
 
+    // VNPay refund API endpoint
+    @Value("${vnpay.apiUrl:https://sandbox.vnpayment.vn/merchant_webapi/api/transaction}")
+    private String vnp_ApiUrl;
+
     @Value("${vnpay.returnUrl}")
     private String vnp_ReturnUrl;
 
@@ -30,12 +34,32 @@ public class VNPayConfig {
     @Value("${vnpay.command}")
     private String vnp_Command;
 
+    @Value("${vnpay.refund.simulate:false}")
+    private boolean refundSimulate;
+
     public String getVnp_PayUrl() {
         return vnp_PayUrl;
     }
 
+    // Compatibility getters used by refund flow
+    public String getApiUrl() {
+        return vnp_ApiUrl;
+    }
+
+    public String getTmnCode() {
+        return vnp_TmnCode;
+    }
+
+    public String getVersion() {
+        return vnp_Version;
+    }
+
     public String getSecretKey() {
         return secretKey;
+    }
+
+    public boolean isRefundSimulate() {
+        return refundSimulate;
     }
 
     public Map<String, String> getVNPayConfig() {

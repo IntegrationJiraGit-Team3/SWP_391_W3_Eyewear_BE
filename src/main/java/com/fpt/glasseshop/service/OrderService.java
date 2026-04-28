@@ -4,7 +4,10 @@ import com.fpt.glasseshop.entity.Order;
 import com.fpt.glasseshop.entity.UserAccount;
 import com.fpt.glasseshop.entity.OrderItem;
 import com.fpt.glasseshop.entity.dto.CreateOrderRequest;
+import com.fpt.glasseshop.entity.dto.OrderRefundRequestDTO;
 import com.fpt.glasseshop.entity.dto.OrderDTO;
+import com.fpt.glasseshop.entity.dto.RefundProcessDTO;
+import com.fpt.glasseshop.entity.dto.VNPayRefundResult;
 
 import java.util.List;
 import java.util.Optional;
@@ -30,9 +33,19 @@ public interface OrderService {
 
     OrderDTO cancelPendingPayment(Long orderId);
 
+    VNPayRefundResult refundVnpayForCancelledOrder(Long orderId, String requesterEmail, String reason);
+
+    OrderDTO requestRefundForCancelledOrder(Long orderId, String requesterEmail, OrderRefundRequestDTO dto);
+
+    OrderDTO requestVnpayRefundForCancelledOrder(Long orderId, String requesterEmail, String reason);
+
+    OrderDTO confirmRefundedForCancelledOrder(Long orderId, String confirmerEmail, RefundProcessDTO dto);
+
     void deleteOrder(Long id);
 
     OrderDTO createOrderFromCart(UserAccount user, CreateOrderRequest request);
+
+    OrderDTO approvePreorder(Long orderId);
 
     List<OrderItem> getOrderItems(Long orderId);
 

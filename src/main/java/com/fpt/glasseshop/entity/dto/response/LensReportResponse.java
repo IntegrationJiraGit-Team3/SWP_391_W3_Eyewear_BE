@@ -11,8 +11,8 @@ import java.math.BigDecimal;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class ProductReportResponse {
-    private String productName;
+public class LensReportResponse {
+    private String lensType;
     private Long quantitySold;
     private Long cancelledQuantity;
     private BigDecimal revenue;

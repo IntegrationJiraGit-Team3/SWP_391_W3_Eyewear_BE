@@ -98,14 +98,26 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     List<Order> findExpiredPendingVnpayOrders(@Param("cutoff") LocalDateTime cutoff);
 
     @Query("""
-        SELECT COALESCE(SUM(o.finalPrice), 0)
+        SELECT COALESCE(SUM(
+            CASE
+                WHEN o.depositType = 'PARTIAL' AND o.paymentStatus = 'PAID'
+                    THEN COALESCE(o.depositAmount, 0)
+                ELSE COALESCE(o.finalPrice, 0)
+            END
+        ), 0)
         FROM Order o
         WHERE o.paymentStatus IN ('PAID', 'PAID_FULL')
     """)
     BigDecimal calculateCollectedCash();
 
     @Query("""
-        SELECT COALESCE(SUM(o.finalPrice), 0)
+        SELECT COALESCE(SUM(
+            CASE
+                WHEN o.depositType = 'PARTIAL' AND o.paymentStatus = 'PAID'
+                    THEN COALESCE(o.depositAmount, 0)
+                ELSE COALESCE(o.finalPrice, 0)
+            END
+        ), 0)
         FROM Order o
         WHERE o.status IN ('PENDING', 'PROCESSING', 'SHIPPED', 'DELIVERING', 'PREORDER')
           AND o.paymentStatus IN ('PAID', 'PAID_FULL')
@@ -130,4 +142,28 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
             @Param("from") LocalDateTime from,
             @Param("to") LocalDateTime to
     );
+
+                @Query("""
+                                SELECT COALESCE(SUM(
+                                                CASE
+                                                                WHEN o.depositType = 'PARTIAL' AND o.paymentStatus = 'PAID'
+                                                                                THEN COALESCE(o.depositAmount, 0)
+                                                                ELSE COALESCE(o.finalPrice, 0)
+                                                END
+                                ), 0)
+                                FROM Order o
+                                WHERE o.orderDate >= :from
+                                        AND o.orderDate <= :to
+                                        AND (
+                                                         o.status IN ('DELIVERED', 'COMPLETED')
+                                                         OR (
+                                                                                UPPER(o.paymentMethod) = 'VNPAY'
+                                                                                AND o.paymentStatus IN ('PAID', 'PAID_FULL')
+                                                         )
+                                        )
+                """)
+                BigDecimal calculateGrossRevenueIncludingVnpayPaidBetween(
+                                                @Param("from") LocalDateTime from,
+                                                @Param("to") LocalDateTime to
+                );
 }

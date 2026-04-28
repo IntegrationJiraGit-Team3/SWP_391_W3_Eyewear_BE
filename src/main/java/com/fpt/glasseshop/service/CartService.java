@@ -129,6 +129,12 @@ public class CartService {
                 Integer axisR = request.getAxisRight();
                 java.math.BigDecimal addL = request.getAddLeft();
                 java.math.BigDecimal addR = request.getAddRight();
+                boolean hasPrescriptionData =
+                        request.getPrescriptionId() != null ||
+                        sphL != null || sphR != null ||
+                        cylL != null || cylR != null ||
+                        axisL != null || axisR != null ||
+                        addL != null || addR != null;
 
 
                 if (request.getPrescriptionId() != null) {
@@ -145,20 +151,21 @@ public class CartService {
 
                 }
 
-                com.fpt.glasseshop.entity.Prescription prescription = com.fpt.glasseshop.entity.Prescription.builder()
-                        .sphLeft(sphL)
-                        .sphRight(sphR)
-                        .cylLeft(cylL)
-                        .cylRight(cylR)
-                        .axisLeft(axisL)
-                        .axisRight(axisR)
-                        .addLeft(addL)
-                        .addRight(addR)
-
-                        .status(false) // pending approval
-                        .cartItem(newItem)
-                        .build();
-                newItem.setPrescription(prescription);
+                if (hasPrescriptionData) {
+                    com.fpt.glasseshop.entity.Prescription prescription = com.fpt.glasseshop.entity.Prescription.builder()
+                            .sphLeft(sphL)
+                            .sphRight(sphR)
+                            .cylLeft(cylL)
+                            .cylRight(cylR)
+                            .axisLeft(axisL)
+                            .axisRight(axisR)
+                            .addLeft(addL)
+                            .addRight(addR)
+                            .status(false) // pending approval
+                            .cartItem(newItem)
+                            .build();
+                    newItem.setPrescription(prescription);
+                }
             }
 
             cart.getItems().add(newItem);

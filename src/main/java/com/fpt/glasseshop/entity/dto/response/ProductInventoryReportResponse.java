@@ -11,8 +11,16 @@ import lombok.NoArgsConstructor;
 @Builder
 public class ProductInventoryReportResponse {
     private String productName;
+    private String productType;
     private String color;
     private Long purchasedQuantity;
+    private Long cancelledQuantity;
     private Long inStockQuantity;
     private Long preorderQuantity;
+
+    private java.math.BigDecimal revenue;
+    private java.math.BigDecimal cancelledRevenue;
+    private java.math.BigDecimal completedRevenue;
+    private java.math.BigDecimal pendingRevenue;
+    private java.math.BigDecimal refundedRevenue;
 }

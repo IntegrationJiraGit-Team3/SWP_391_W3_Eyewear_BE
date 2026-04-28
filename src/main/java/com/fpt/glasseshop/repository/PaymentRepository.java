@@ -7,6 +7,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.time.LocalDateTime;
 
 @Repository
@@ -46,6 +47,19 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
 	      AND p.paidAt <= :to
 	    """)
     BigDecimal sumVnpayRefundedAmountsBetween(
+	    @Param("from") LocalDateTime from,
+	    @Param("to") LocalDateTime to
+    );
+
+    @Query("""
+	    SELECT p
+	    FROM Payment p
+	    WHERE p.amount < 0
+	      AND UPPER(p.paymentMethod) = 'VNPAY'
+	      AND p.paidAt >= :from
+	      AND p.paidAt <= :to
+	    """)
+    List<Payment> findVnpayRefundedPaymentsBetween(
 	    @Param("from") LocalDateTime from,
 	    @Param("to") LocalDateTime to
     );

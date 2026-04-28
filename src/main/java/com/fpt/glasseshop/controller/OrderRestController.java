@@ -263,6 +263,34 @@ public class OrderRestController {
         }
     }
 
+    @PostMapping("/{id}/approve-preorder")
+    public ResponseEntity<ApiResponse<OrderDTO>> approvePreorder(@PathVariable Long id) {
+        try {
+            UserAccount currentUser = getCurrentUser();
+            boolean isStaffOrAdmin = "ADMIN".equals(currentUser.getRole())
+                    || "OPERATIONAL_STAFF".equals(currentUser.getRole());
+
+            if (!isStaffOrAdmin) {
+                throw new AccessDeniedException("You are not authorized to approve preorders");
+            }
+
+            OrderDTO updated = orderService.approvePreorder(id);
+            return ResponseEntity.ok(ApiResponse.success("Preorder approved", updated));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(ApiResponse.error(e.getMessage()));
+        } catch (AccessDeniedException e) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(ApiResponse.error(e.getMessage()));
+        } catch (ResourceNotFoundException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(ApiResponse.error(e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(ApiResponse.error("Approve preorder failed: " + e.getMessage()));
+        }
+    }
+
     @DeleteMapping("/{id}")
     public ResponseEntity<ApiResponse<Void>> deleteOrder(@PathVariable Long id) {
         try {

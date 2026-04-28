@@ -15,6 +15,7 @@ import java.util.List;
 @Builder
 @Schema(description = "Data Transfer Object representing an order")
 public class OrderDTO {
+
     @Schema(description = "Unique identifier of the order", example = "101")
     private Long orderId;
 
@@ -43,22 +44,19 @@ public class OrderDTO {
     private String phone;
     private String address;
     private String note;
-    
+
     private BigDecimal shippingFee;
     private BigDecimal voucherDiscount;
     private BigDecimal finalPrice;
+
     private BigDecimal depositAmount;
     private String depositType;
     private String depositPaymentMethod;
     private LocalDateTime stockReadyAt;
 
-    private String refundStatus;
-    private LocalDateTime refundRequestedAt;
-    private LocalDateTime refundProcessedAt;
-    private String refundBankAccountNumber;
-    private String refundBankName;
-    private String refundBankAccountHolder;
-    private String refundNote;
+    // 🔴 THÊM 2 FIELD NÀY
+    private String remainingPaymentMethod; // COD / VNPAY / null
+    private String remainingPaymentStage;  // UNPAID / PENDING_CONFIRMATION / PAID
 
     private String refundStatus;
     private LocalDateTime refundRequestedAt;

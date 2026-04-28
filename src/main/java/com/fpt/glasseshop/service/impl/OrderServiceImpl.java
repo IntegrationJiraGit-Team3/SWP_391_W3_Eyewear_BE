@@ -11,12 +11,14 @@ import com.fpt.glasseshop.service.VNPayRefundService;
 import com.fpt.glasseshop.service.NotificationService;
 import com.fpt.glasseshop.service.OrderItemService;
 import com.fpt.glasseshop.service.OrderService;
+import com.fpt.glasseshop.service.VNPayRefundService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -66,22 +68,7 @@ public class OrderServiceImpl implements OrderService {
 
     @Override
     public Optional<Order> getOrderById(Long orderId) {
-        Optional<Order> orderOpt = orderRepository.findById(orderId);
-        if (orderOpt.isPresent()) {
-            Order order = orderOpt.get();
-
-            if ("PARTIAL".equals(order.getDepositType())
-                    && "PROCESSING".equals(order.getStatus())
-                    && order.getStockReadyAt() != null
-                    && order.getStockReadyAt().plusHours(12).isBefore(LocalDateTime.now())
-                    && "UNPAID".equals(order.getPaymentStatus())
-                    && !"COD".equals(order.getPaymentMethod())) {
-
-                order.setPaymentMethod("COD");
-                orderRepository.save(order);
-            }
-        }
-        return orderOpt;
+        return orderRepository.findById(orderId);
     }
 
     @Override
@@ -112,15 +99,16 @@ public class OrderServiceImpl implements OrderService {
             throw new IllegalArgumentException("Invalid order status: " + targetStatus);
         }
 
-        if (("PENDING".equals(order.getStatus()) || "PREORDER".equals(order.getStatus()))
+        if (("PENDING".equalsIgnoreCase(order.getStatus()) || "PREORDER".equalsIgnoreCase(order.getStatus()))
                 && "PROCESSING".equals(targetStatus)) {
             order.setStockReadyAt(LocalDateTime.now());
         }
 
-        if ("PROCESSING".equals(order.getStatus())
+        if ("PROCESSING".equalsIgnoreCase(order.getStatus())
                 && ("SHIPPED".equals(targetStatus) || "DELIVERING".equals(targetStatus))) {
             boolean hasUnapprovedPrescription = order.getOrderItems().stream()
-                    .anyMatch(item -> item.getPrescription() != null && !Boolean.TRUE.equals(item.getPrescription().getStatus()));
+                    .anyMatch(item -> requiresPrescriptionApproval(item)
+                            && !Boolean.TRUE.equals(item.getPrescription().getStatus()));
             if (hasUnapprovedPrescription) {
                 throw new IllegalStateException("Cannot ship order: all prescriptions must be approved first.");
             }
@@ -129,9 +117,14 @@ public class OrderServiceImpl implements OrderService {
         order.setStatus(targetStatus);
 
         if ("DELIVERED".equalsIgnoreCase(targetStatus) || "COMPLETED".equalsIgnoreCase(targetStatus)) {
-            if ("COD".equalsIgnoreCase(order.getPaymentMethod())) {
+            boolean isPartialPreorder = "PARTIAL".equalsIgnoreCase(order.getDepositType());
+
+            // Chỉ auto PAID cho đơn thường COD
+            if (!isPartialPreorder && "COD".equalsIgnoreCase(order.getPaymentMethod())) {
                 order.setPaymentStatus("PAID");
             }
+
+            // Đơn preorder 50% thì KHÔNG auto PAID_FULL ở đây
             if (order.getDeliveredAt() == null) {
                 order.setDeliveredAt(LocalDateTime.now());
             }
@@ -139,12 +132,14 @@ public class OrderServiceImpl implements OrderService {
 
         if ("CANCELED".equals(targetStatus) || "CANCELLED".equals(targetStatus)) {
             restoreStock(order);
+
             if ("UNPAID".equalsIgnoreCase(order.getPaymentStatus())) {
                 order.setPaymentStatus("CANCELLED");
             }
 
             if ("VNPAY".equalsIgnoreCase(order.getPaymentMethod())
                     && ("PAID".equalsIgnoreCase(order.getPaymentStatus())
+                    || "PAID_DEPOSIT".equalsIgnoreCase(order.getPaymentStatus())
                     || "PAID_FULL".equalsIgnoreCase(order.getPaymentStatus()))) {
                 if (order.getRefundStatus() == null || order.getRefundStatus().isBlank()) {
                     order.setRefundStatus("WAITING_REFUND");
@@ -189,7 +184,9 @@ public class OrderServiceImpl implements OrderService {
         }
 
         String paymentStatus = order.getPaymentStatus() != null ? order.getPaymentStatus().trim() : "";
-        if (!"PAID".equalsIgnoreCase(paymentStatus) && !"PAID_FULL".equalsIgnoreCase(paymentStatus)) {
+        if (!"PAID".equalsIgnoreCase(paymentStatus)
+            && !"PAID_DEPOSIT".equalsIgnoreCase(paymentStatus)
+            && !"PAID_FULL".equalsIgnoreCase(paymentStatus)) {
             throw new IllegalArgumentException("Order is not in a paid state");
         }
 
@@ -213,7 +210,7 @@ public class OrderServiceImpl implements OrderService {
         )) {
             return VNPayRefundResult.builder()
                     .success(true)
-                .refundStatus("REFUNDED")
+                    .refundStatus("REFUNDED")
                     .message("Order already has a VNPay refund recorded")
                     .transactionReference(null)
                     .build();
@@ -305,13 +302,14 @@ public class OrderServiceImpl implements OrderService {
         }
 
         String paymentStatus = order.getPaymentStatus() != null ? order.getPaymentStatus().trim() : "";
-        if (!"PAID".equalsIgnoreCase(paymentStatus) && !"PAID_FULL".equalsIgnoreCase(paymentStatus)) {
+        if (!"PAID".equalsIgnoreCase(paymentStatus)
+            && !"PAID_DEPOSIT".equalsIgnoreCase(paymentStatus)
+            && !"PAID_FULL".equalsIgnoreCase(paymentStatus)) {
             throw new IllegalArgumentException("Order is not in a paid state");
         }
 
         String status = order.getStatus() != null ? order.getStatus().trim().toUpperCase() : "";
         if (!Arrays.asList("CANCELED", "CANCELLED", "REFUND", "REFUNDED").contains(status)) {
-            // Keep behavior simple: only allow refund requests after cancellation.
             throw new IllegalArgumentException("Order must be cancelled before requesting a refund");
         }
 
@@ -426,7 +424,6 @@ public class OrderServiceImpl implements OrderService {
         boolean hasManualBankInfo = order.getRefundBankAccountNumber() != null
                 && !order.getRefundBankAccountNumber().isBlank();
 
-        // Auto VNPay refund path: no bank info -> perform VNPay refund on admin confirmation.
         if (!hasManualBankInfo && order.getPaymentMethod() != null
                 && "VNPAY".equalsIgnoreCase(order.getPaymentMethod().trim())) {
 
@@ -491,7 +488,6 @@ public class OrderServiceImpl implements OrderService {
             return convertToDTO(orderRepository.save(order));
         }
 
-        // Manual refund path: admin confirms they've sent the refund manually.
         order.setRefundStatus("REFUNDED");
         order.setRefundProcessedAt(LocalDateTime.now());
         order.setStatus("REFUNDED");
@@ -504,30 +500,83 @@ public class OrderServiceImpl implements OrderService {
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new ResourceNotFoundException("Order not found with id: " + orderId));
 
-        List<String> validStatuses = Arrays.asList("UNPAID", "PAID", "PAID_FULL", "FAILED", "CANCELLED");
-        String targetStatus = newStatus.toUpperCase();
+        List<String> validStatuses = Arrays.asList("UNPAID", "PAID", "PAID_DEPOSIT", "PAID_FULL", "FAILED", "CANCELLED");
+        String targetStatus = newStatus == null ? "" : newStatus.toUpperCase().trim();
+        String currentStatus = order.getPaymentStatus() == null
+                ? "UNPAID"
+                : order.getPaymentStatus().trim().toUpperCase();
 
         if (!validStatuses.contains(targetStatus)) {
             throw new IllegalArgumentException("Invalid payment status: " + targetStatus);
         }
 
-        if ("PAID".equals(order.getPaymentStatus()) && "PAID".equals(targetStatus)) {
-            order.setPaymentStatus("PAID_FULL");
+        boolean isPartialOrder = "PARTIAL".equalsIgnoreCase(order.getDepositType());
+        String currentOrderStatus = order.getStatus() == null ? "" : order.getStatus().trim().toUpperCase();
+
+        if ("PAID_DEPOSIT".equals(targetStatus)) {
+            if (!isPartialOrder) {
+                throw new IllegalStateException("PAID_DEPOSIT is only allowed for PARTIAL orders");
+            }
+
+            if (!"PAID_DEPOSIT".equals(currentStatus) && !"PAID_FULL".equals(currentStatus)) {
+                order.setPaymentStatus("PAID_DEPOSIT");
+            }
+
+            order.setRemainingPaymentStage("UNPAID");
+        } else
+        if ("PAID".equals(targetStatus)) {
+            if (!"PAID".equals(currentStatus) && !"PAID_FULL".equals(currentStatus)) {
+                order.setPaymentStatus("PAID");
+            }
+            if (isPartialOrder) {
+                order.setRemainingPaymentStage("UNPAID"); // 🔥 luôn reset
+            }
+        } else if ("PAID_FULL".equals(targetStatus)) {
+                if (isPartialOrder) {
+                    if (!"COMPLETED".equals(currentOrderStatus)
+                            && !"DELIVERED".equals(currentOrderStatus)) {
+                        throw new IllegalStateException(
+                                "Order must be DELIVERED or COMPLETED before full payment"
+                        );
+                    }
+
+                    if (order.getRemainingPaymentMethod() == null
+                            || order.getRemainingPaymentMethod().isBlank()) {
+
+                        if ("PENDING_CONFIRMATION".equalsIgnoreCase(order.getRemainingPaymentStage())) {
+                            order.setRemainingPaymentMethod("COD");
+                        } else if ("COD".equalsIgnoreCase(order.getPaymentMethod())) {
+                            // Backward-compatible fallback for older partial COD orders
+                            // that never persisted remainingPaymentMethod explicitly.
+                            order.setRemainingPaymentMethod("COD");
+                        } else {
+                            throw new IllegalStateException("Remaining payment method is not selected");
+                        }
+                    }
+                }
+
+                order.setPaymentStatus("PAID_FULL");
+
+                if (isPartialOrder) {
+                    order.setRemainingPaymentStage("PAID");
+                }
         } else {
             order.setPaymentStatus(targetStatus);
         }
 
-        if (("PAID".equals(targetStatus) || "PAID_FULL".equals(targetStatus))
-                && ("PENDING".equals(order.getStatus()) || "PREORDER".equals(order.getStatus()))) {
+        if (("PAID".equals(order.getPaymentStatus()) || "PAID_FULL".equals(order.getPaymentStatus()))
+                && ("PENDING".equalsIgnoreCase(order.getStatus()) || "PREORDER".equalsIgnoreCase(order.getStatus()))) {
             String paymentMethod = order.getPaymentMethod() != null ? order.getPaymentMethod().trim() : "";
-            // Business rule: VNPay orders should remain PENDING/PREORDER after successful payment
-            // so that the customer can still cancel before fulfillment.
-            if (!"VNPAY".equalsIgnoreCase(paymentMethod)) {
+            boolean isPreorder = "PREORDER".equalsIgnoreCase(order.getStatus())
+                    || "PARTIAL".equalsIgnoreCase(order.getDepositType());
+
+            if (!"VNPAY".equalsIgnoreCase(paymentMethod) && !isPreorder) {
                 order.setStatus("PROCESSING");
             }
         }
 
-        if ("FAILED".equals(targetStatus) && ("PENDING".equals(order.getStatus()) || "PREORDER".equals(order.getStatus()))) {
+        if ("FAILED".equals(targetStatus)
+                && ("PENDING".equalsIgnoreCase(order.getStatus()) || "PREORDER".equalsIgnoreCase(order.getStatus()))) {
             order.setStatus("CANCELLED");
             restoreStock(order);
         }
@@ -545,6 +594,47 @@ public class OrderServiceImpl implements OrderService {
     public OrderDTO updatePaymentMethod(Long orderId, String newMethod) {
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new ResourceNotFoundException("Order not found with id: " + orderId));
+
+        boolean isPartialOrder = "PARTIAL".equalsIgnoreCase(order.getDepositType());
+        String paymentStatus = order.getPaymentStatus() == null
+                ? ""
+                : order.getPaymentStatus().trim().toUpperCase();
+        String remainingStage = order.getRemainingPaymentStage() == null
+                ? ""
+                : order.getRemainingPaymentStage().trim().toUpperCase();
+        boolean isCompleted = "COMPLETED".equalsIgnoreCase(order.getStatus())
+                || "DELIVERED".equalsIgnoreCase(order.getStatus());
+
+        // For PARTIAL orders: allow choosing remaining payment method after deposit is paid.
+        // This must NOT overwrite the deposit payment method.
+        if (isPartialOrder
+                && "PAID_DEPOSIT".equals(paymentStatus)
+                && !"PAID".equalsIgnoreCase(remainingStage)
+                && !"PAID_FULL".equals(paymentStatus)) {
+
+            order.setRemainingPaymentMethod(newMethod);
+
+            if ("COD".equalsIgnoreCase(newMethod)) {
+                order.setRemainingPaymentStage("PENDING_CONFIRMATION");
+            } else {
+                order.setRemainingPaymentStage("UNPAID");
+            }
+
+            return convertToDTO(orderRepository.save(order));
+        }
+
+        if (isPartialOrder && isCompleted && !"PAID_FULL".equalsIgnoreCase(order.getPaymentStatus())) {
+            order.setRemainingPaymentMethod(newMethod);
+
+            if ("COD".equalsIgnoreCase(newMethod)) {
+                order.setRemainingPaymentStage("PENDING_CONFIRMATION");
+            } else {
+                order.setRemainingPaymentStage("UNPAID");
+            }
+
+            return convertToDTO(orderRepository.save(order));
+        }
+
         order.setPaymentMethod(newMethod);
         return convertToDTO(orderRepository.save(order));
     }
@@ -581,7 +671,7 @@ public class OrderServiceImpl implements OrderService {
     @Scheduled(fixedDelay = 300000)
     @Transactional
     public void expirePendingVnpayOrders() {
-        LocalDateTime cutoff = LocalDateTime.now().minusMinutes(15);
+        LocalDateTime cutoff = LocalDateTime.now().minusMinutes(5);
         List<Order> expiredOrders = orderRepository.findExpiredPendingVnpayOrders(cutoff);
 
         for (Order order : expiredOrders) {
@@ -618,6 +708,8 @@ public class OrderServiceImpl implements OrderService {
         }
 
         BigDecimal totalPrice = BigDecimal.ZERO;
+        BigDecimal preorderItemsTotal = BigDecimal.ZERO;
+        BigDecimal inStockItemsTotal = BigDecimal.ZERO;
         BigDecimal shippingFee = request.getShippingFee() != null ? request.getShippingFee() : BigDecimal.ZERO;
         BigDecimal voucherDiscount = request.getVoucherDiscount() != null ? request.getVoucherDiscount() : BigDecimal.ZERO;
 
@@ -639,6 +731,8 @@ public class OrderServiceImpl implements OrderService {
                 .paymentStatus("UNPAID")
                 .depositType(request.getDepositType())
                 .depositPaymentMethod(request.getPaymentMethod())
+                .remainingPaymentMethod(null)
+                .remainingPaymentStage("UNPAID")
                 .orderDate(LocalDateTime.now())
                 .orderItems(new ArrayList<>())
                 .build();
@@ -651,7 +745,10 @@ public class OrderServiceImpl implements OrderService {
             boolean isPreorderItem = Boolean.TRUE.equals(cartItem.getIsPreorder());
 
             if (!isPreorderItem) {
-                int updatedRows = productVariantRepository.decreaseStock(cartItem.getVariant().getVariantId(), cartItem.getQuantity());
+                int updatedRows = productVariantRepository.decreaseStock(
+                        cartItem.getVariant().getVariantId(),
+                        cartItem.getQuantity()
+                );
                 if (updatedRows == 0) {
                     throw new IllegalArgumentException("Insufficient stock for product");
                 }
@@ -664,6 +761,12 @@ public class OrderServiceImpl implements OrderService {
 
             BigDecimal subtotal = unitPrice.multiply(BigDecimal.valueOf(cartItem.getQuantity()));
             totalPrice = totalPrice.add(subtotal);
+
+            if (isPreorderItem) {
+                preorderItemsTotal = preorderItemsTotal.add(subtotal);
+            } else {
+                inStockItemsTotal = inStockItemsTotal.add(subtotal);
+            }
 
             for (int i = 0; i < cartItem.getQuantity(); i++) {
                 OrderItem orderItem = OrderItem.builder()
@@ -687,7 +790,7 @@ public class OrderServiceImpl implements OrderService {
                         .quantity(1)
                         .unitPrice(unitPrice)
                         .isPreorder(isPreorderItem)
-                        .fulfillmentType(cartItem.getPrescription() != null || cartItem.getIsLens() == Boolean.TRUE
+                        .fulfillmentType(cartItem.getPrescription() != null
                                 ? "PRESCRIPTION"
                                 : (isPreorderItem ? "PRE_ORDER" : "IN_STOCK"))
                         .sphLeft(cartItem.getPrescription() != null ? cartItem.getPrescription().getSphLeft() : null)
@@ -728,19 +831,29 @@ public class OrderServiceImpl implements OrderService {
         BigDecimal finalTotal = totalPrice.add(shippingFee).subtract(voucherDiscount);
         order.setFinalPrice(finalTotal);
 
-        if (Boolean.TRUE.equals(request.getIsPreorder()) && "PARTIAL".equals(request.getDepositType())) {
-            BigDecimal inStockPart = BigDecimal.ZERO;
-            BigDecimal preOrderPart = BigDecimal.ZERO;
+        if ("PARTIAL".equalsIgnoreCase(request.getDepositType())) {
+            if (preorderItemsTotal.compareTo(BigDecimal.ZERO) <= 0) {
+                order.setDepositAmount(finalTotal.max(BigDecimal.ZERO));
+            } else {
+                BigDecimal halfPreorder = preorderItemsTotal
+                        .divide(BigDecimal.valueOf(2), 0, RoundingMode.HALF_UP)
+                        .max(BigDecimal.ZERO);
 
-            for (OrderItem item : order.getOrderItems()) {
-                BigDecimal itemSubtotal = item.getUnitPrice().multiply(BigDecimal.valueOf(item.getQuantity()));
-                if (Boolean.TRUE.equals(item.getIsPreorder())) {
-                    preOrderPart = preOrderPart.add(itemSubtotal);
-                } else {
-                    inStockPart = inStockPart.add(itemSubtotal);
+                BigDecimal deposit = inStockItemsTotal
+                        .add(shippingFee)
+                        .subtract(voucherDiscount)
+                        .add(halfPreorder);
+
+                if (deposit.compareTo(BigDecimal.ZERO) < 0) {
+                    deposit = BigDecimal.ZERO;
                 }
+
+                if (deposit.compareTo(finalTotal) > 0) {
+                    deposit = finalTotal;
+                }
+
+                order.setDepositAmount(deposit);
             }
-            order.setDepositAmount(inStockPart.add(preOrderPart.divide(BigDecimal.valueOf(2))).add(shippingFee));
         } else {
             order.setDepositAmount(finalTotal);
         }
@@ -762,11 +875,84 @@ public class OrderServiceImpl implements OrderService {
         return orderItemService.getOrderItemsByOrderId(orderId);
     }
 
+    @Override
+    @Transactional
+    public OrderDTO approvePreorder(Long orderId) {
+        if (orderId == null) {
+            throw new IllegalArgumentException("orderId is required");
+        }
+
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new ResourceNotFoundException("Order not found with id: " + orderId));
+
+        if (order.getOrderItems() == null || order.getOrderItems().isEmpty()) {
+            throw new IllegalStateException("Order has no items");
+        }
+
+        String status = order.getStatus() != null ? order.getStatus().trim().toUpperCase() : "";
+        boolean alreadyApproved = order.getStockReadyAt() != null && "PROCESSING".equals(status);
+        if (alreadyApproved) {
+            return convertToDTO(order);
+        }
+
+        boolean hasPreorderItems = order.getOrderItems().stream()
+                .anyMatch(item -> Boolean.TRUE.equals(item.getIsPreorder()));
+
+        if (!hasPreorderItems) {
+            throw new IllegalStateException("Order does not contain preorder items");
+        }
+
+        // Deduct stock for preorder items.
+        // Use conditional UPDATE in repository to prevent negative stock.
+        for (OrderItem item : order.getOrderItems()) {
+            if (!Boolean.TRUE.equals(item.getIsPreorder())) {
+                continue;
+            }
+
+            Long variantId = item.getVariantId();
+            Integer quantity = item.getQuantity();
+
+            if (variantId == null || quantity == null || quantity <= 0) {
+                throw new IllegalStateException("Invalid preorder item stock data");
+            }
+
+            int updated = productVariantRepository.decreaseStock(variantId, quantity);
+            if (updated <= 0) {
+                String itemName = item.getProductName() != null ? item.getProductName() : "variant " + variantId;
+                throw new IllegalStateException(
+                        "Insufficient stock to approve preorder for: " + itemName
+                );
+            }
+
+            // Mark item as no longer a preorder so it disappears from Pre-Order list.
+            item.setIsPreorder(false);
+        }
+
+        order.setStockReadyAt(LocalDateTime.now());
+        order.setStatus("PROCESSING");
+
+        notificationService.createNotification(
+                order.getUser(),
+                "Preorder Approved",
+                "Your preorder " + order.getOrderCode() + " is now processing",
+                "ORDER",
+                order.getOrderId()
+        );
+
+        return convertToDTO(orderRepository.save(order));
+    }
+
     private void restoreStock(Order order) {
         if (order.getOrderItems() == null) return;
 
+        boolean preorderStockWasDeducted = order.getStockReadyAt() != null;
+
         for (OrderItem item : order.getOrderItems()) {
-            if (Boolean.TRUE.equals(item.getIsPreorder())) continue;
+            boolean isPreorderItem = Boolean.TRUE.equals(item.getIsPreorder());
+
+            if (isPreorderItem && !preorderStockWasDeducted) {
+                continue;
+            }
 
             if (item.getVariantId() != null && item.getQuantity() != null) {
                 productVariantRepository.decreaseStock(item.getVariantId(), -item.getQuantity());
@@ -796,6 +982,8 @@ public class OrderServiceImpl implements OrderService {
                 .depositAmount(order.getDepositAmount())
                 .depositType(order.getDepositType())
                 .depositPaymentMethod(order.getDepositPaymentMethod())
+                .remainingPaymentMethod(order.getRemainingPaymentMethod())
+                .remainingPaymentStage(order.getRemainingPaymentStage())
                 .stockReadyAt(order.getStockReadyAt())
                 .refundStatus(order.getRefundStatus())
                 .refundRequestedAt(order.getRefundRequestedAt())
@@ -862,6 +1050,20 @@ public class OrderServiceImpl implements OrderService {
                 .adminNote(p.getAdminNote())
                 .createdAt(p.getCreatedAt())
                 .build();
+    }
+
+    private boolean requiresPrescriptionApproval(OrderItem item) {
+        Prescription prescription = item.getPrescription();
+        if (prescription == null) return false;
+
+        return prescription.getSphLeft() != null
+                || prescription.getSphRight() != null
+                || prescription.getCylLeft() != null
+                || prescription.getCylRight() != null
+                || prescription.getAxisLeft() != null
+                || prescription.getAxisRight() != null
+                || prescription.getAddLeft() != null
+                || prescription.getAddRight() != null;
     }
 
     @Override

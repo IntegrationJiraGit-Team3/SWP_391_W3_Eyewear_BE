@@ -32,7 +32,9 @@ public class AdminDashboardAnalyticsResponse {
     private BigDecimal totalProductRevenue;
 
     private BigDecimal codRevenue;
+    private BigDecimal codNetRevenue;
     private BigDecimal vnpayRevenue;
+    private BigDecimal vnpayNetRevenue;
 
     private Long totalCustomers;
     private Long newCustomers;

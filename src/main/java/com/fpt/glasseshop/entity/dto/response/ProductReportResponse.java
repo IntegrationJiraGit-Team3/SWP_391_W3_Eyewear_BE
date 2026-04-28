@@ -14,7 +14,9 @@ import java.math.BigDecimal;
 public class ProductReportResponse {
     private String productName;
     private Long quantitySold;
+    private Long cancelledQuantity;
     private BigDecimal revenue;
+    private BigDecimal cancelledRevenue;
     private BigDecimal completedRevenue;
     private BigDecimal pendingRevenue;
     private BigDecimal refundedRevenue;

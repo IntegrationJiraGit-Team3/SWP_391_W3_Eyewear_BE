@@ -45,6 +45,8 @@ public interface OrderService {
 
     OrderDTO createOrderFromCart(UserAccount user, CreateOrderRequest request);
 
+    OrderDTO approvePreorder(Long orderId);
+
     List<OrderItem> getOrderItems(Long orderId);
 
     long getTotalCustomersPaid();
